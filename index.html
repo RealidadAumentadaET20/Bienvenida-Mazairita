@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover"><meta name="theme-color" content="#111"><title>Mazairita · Realidad aumentada</title>
+<style>
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#000;color:#fff;font-family:system-ui,sans-serif}
+#camera,#three{position:fixed;inset:0;width:100%;height:100%}#camera{object-fit:cover}#three{pointer-events:none}#scan{display:none}
+#intro{position:fixed;inset:0;z-index:10;display:flex;align-items:center;justify-content:center;padding:24px;background:linear-gradient(150deg,#151515,#333);text-align:center}
+#panel{max-width:440px}h1{font-size:30px;margin:0 0 12px}p{line-height:1.5;color:#eee}button{border:0;border-radius:14px;padding:14px 20px;font-size:16px;font-weight:700;cursor:pointer}
+#start{background:#fff;color:#111}#status{position:fixed;z-index:5;top:12px;left:12px;right:12px;padding:10px;text-align:center;border-radius:12px;background:#0009;font-size:14px;pointer-events:none}
+#choice{position:fixed;z-index:6;bottom:calc(20px + env(safe-area-inset-bottom));left:0;right:0;display:none;justify-content:center;gap:14px}
+.choice{width:min(38vw,180px);padding:0;background:transparent}.choice img{width:100%;height:auto;filter:drop-shadow(0 4px 12px #0008)}
+#media{position:fixed;inset:0;z-index:8;display:none;align-items:center;justify-content:center;background:#000c;padding:16px}#box{width:min(95vw,720px);position:relative}#response{width:100%;max-height:80vh;background:#000}#close{position:absolute;right:6px;top:6px;z-index:2;border-radius:50%;padding:8px 12px}
+</style></head><body>
+<video id="camera" playsinline muted></video><canvas id="scan"></canvas><canvas id="three"></canvas>
+<div id="intro"><div id="panel"><h1>Mazairita en realidad aumentada</h1><p>Activá la cámara y apuntá al código QR. Cuando el teléfono lo detecte, aparecerá Mazairita y se habilitarán las opciones.</p><button id="start">Activar cámara</button><p style="font-size:12px;color:#bbb">Requiere HTTPS y permiso para usar la cámara.</p></div></div>
+<div id="status">Apuntá la cámara al código QR</div>
+<div id="choice"><button class="choice" id="yes"><img alt="Sí" src="https://user.cdn.mywebar.com/860448/BOTON__SI__1789653740658.png?hash=b313e32bfd1c15eb7fa6eb33bcf47f70&_=1789655917369"></button><button class="choice" id="no"><img alt="No" src="https://user.cdn.mywebar.com/860448/BOTON__NO__1789653774074.png?hash=4735fdfd5f3cc99e73426affce64e2fc&_=1789655917369"></button></div>
+<div id="media"><div id="box"><button id="close">✕</button><video id="response" playsinline controls></video></div></div>
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+<script>
+(() => {
+  const start = document.getElementById('start');
+  const camera = document.getElementById('camera');
+  const intro = document.getElementById('intro');
+  const status = document.getElementById('status');
+  start.addEventListener('click', async () => {
+    start.disabled = true;
+    start.textContent = 'Activando cámara…';
+    status.textContent = 'Solicitando permiso para la cámara…';
+    try {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error('Este navegador no permite acceder a la cámara. Abrí la página con HTTPS en Chrome o Safari actualizado.');
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }
+      });
+      camera.srcObject = stream;
+      await camera.play();
+      intro.style.display = 'none';
+      status.textContent = 'Cámara activada. Buscando el código QR…';
+      window.dispatchEvent(new Event('camera-ready'));
+    } catch (err) {
+      console.error('No se pudo activar la cámara:', err);
+      status.textContent = 'No se pudo activar la cámara.';
+      alert('No se pudo activar la cámara. Revisá el permiso del sitio y usá la URL HTTPS. Detalle: ' + (err.message || err.name || 'error desconocido'));
+      start.disabled = false;
+      start.textContent = 'Intentar activar cámara nuevamente';
+    }
+  });
+})();
+</script>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.170.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
+const MODEL='https://user.cdn.mywebar.com/860448/MAZAIRITA_VERSION_FINAL_APARICION_Y_SALUDO_1791383762681.glb';
+const YESVID='https://user.cdn.mywebar.com/860448/despedida_1789655906394.mp4';
+const NOVID='https://user.cdn.mywebar.com/860448/MARCO_TEXTO_1790173626964.mp4';
+const cam=document.querySelector('#camera'), canvas=document.querySelector('#scan'), ctx=canvas.getContext('2d',{willReadFrequently:true});
+const intro=document.querySelector('#intro'), status=document.querySelector('#status'), choice=document.querySelector('#choice'), media=document.querySelector('#media'), response=document.querySelector('#response');
+const renderer=new THREE.WebGLRenderer({canvas:document.querySelector('#three'),alpha:true,antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio||1,2));renderer.setSize(innerWidth,innerHeight);renderer.outputColorSpace=THREE.SRGBColorSpace;
+const scene=new THREE.Scene(), cam3d=new THREE.PerspectiveCamera(45,innerWidth/innerHeight,.01,100);cam3d.position.set(0,0,5);
+scene.add(new THREE.HemisphereLight(0xffffff,0x777777,2));const light=new THREE.DirectionalLight(0xffffff,2);light.position.set(2,4,5);scene.add(light);
+const root=new THREE.Group();scene.add(root);root.visible=false;
+let ready=false,active=false,mediaOpen=false,lastScan=0,lastSeen=0;
+const clock=new THREE.Clock();
+new GLTFLoader().load(MODEL,g=>{
+  const obj=g.scene;
+  const b=new THREE.Box3().setFromObject(obj),s=b.getSize(new THREE.Vector3()),c=b.getCenter(new THREE.Vector3());
+  obj.position.sub(c);
+  obj.scale.setScalar(1.8/(Math.max(s.x,s.y,s.z)||1));
+  root.add(obj);
+  if(g.animations && g.animations.length){
+    const mixer=new THREE.AnimationMixer(obj);
+    g.animations.forEach(clip=>mixer.clipAction(clip).reset().play());
+    root.userData.mixer=mixer;
+    console.info('Animaciones encontradas:',g.animations.map(a=>a.name),'duración:',g.animations.map(a=>a.duration));
+  } else {
+    console.warn('El archivo GLB no contiene clips de animación.');
+  }
+  ready=true;
+},undefined,e=>console.error('Error cargando modelo 3D',e));
+function renderLoop(){
+  requestAnimationFrame(renderLoop);
+  const delta=Math.min(clock.getDelta(),0.05);
+  if(root.userData.mixer) root.userData.mixer.update(delta);
+  renderer.render(scene,cam3d);
+}
+renderLoop();
+function resize(){renderer.setSize(innerWidth,innerHeight);cam3d.aspect=innerWidth/innerHeight;cam3d.updateProjectionMatrix()}addEventListener('resize',resize);
+window.addEventListener('camera-ready',()=>{active=true;status.textContent='Buscando el código QR…';requestAnimationFrame(scanLoop);});
+function scanLoop(t){if(!active)return;requestAnimationFrame(scanLoop);if(t-lastScan<80||cam.readyState<2)return;lastScan=t;const w=cam.videoWidth,h=cam.videoHeight;if(!w||!h)return;if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h}ctx.drawImage(cam,0,0,w,h);const image=ctx.getImageData(0,0,w,h),code=window.jsQR?.(image.data,w,h,{inversionAttempts:'attemptBoth'});
+if(code?.location){lastSeen=performance.now();const p=code.location,pts=[p.topLeftCorner,p.topRightCorner,p.bottomRightCorner,p.bottomLeftCorner],cx=pts.reduce((a,q)=>a+q.x,0)/4,cy=pts.reduce((a,q)=>a+q.y,0)/4,edge=Math.hypot(pts[1].x-pts[0].x,pts[1].y-pts[0].y);const x=cx/w,y=cy/h,sx=edge/w,ndcx=x*2-1,ndcy=1-y*2,dist=3.4,hh=2*Math.tan(THREE.MathUtils.degToRad(cam3d.fov)/2)*dist;root.position.set(ndcx*hh*cam3d.aspect/2,ndcy*hh/2,0);root.scale.setScalar(Math.max(.35,Math.min(2.4,sx*hh*1.5)));root.visible=ready&&!mediaOpen;choice.style.display=mediaOpen?'none':'flex';status.textContent='¡QR detectado! Mantenelo dentro de la cámara.'}
+else if(performance.now()-lastSeen>220){root.visible=false;choice.style.display='none';if(!mediaOpen)status.textContent='Apuntá la cámara al código QR'}
+ }
+function showVideo(url){mediaOpen=true;root.visible=false;choice.style.display='none';response.pause();response.src=url;media.style.display='flex';response.load();response.play().catch(()=>{})}
+function closeVideo(){response.pause();response.removeAttribute('src');response.load();media.style.display='none';mediaOpen=false}
+document.querySelector('#yes').onclick=()=>showVideo(YESVID);document.querySelector('#no').onclick=()=>showVideo(NOVID);document.querySelector('#close').onclick=closeVideo;media.onclick=e=>{if(e.target===media)closeVideo()};
+document.addEventListener('visibilitychange',()=>{if(document.hidden)cam.pause();else if(active)cam.play().catch(()=>{})});
+</script></body></html>
