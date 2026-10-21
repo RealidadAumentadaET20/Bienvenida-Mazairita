@@ -74,7 +74,6 @@ p{line-height:1.5;color:#eee;margin:0 0 14px}
   <div id="endbar"><button id="btnAgain">Volver a empezar</button></div>
 </div>
 
-<!-- Compatibilidad de importmap con navegadores viejos (Safari < 16.4) -->
 <script async src="https://cdn.jsdelivr.net/npm/es-module-shims@1.10.0/dist/es-module-shims.js"></script>
 <script type="importmap">
 {
@@ -89,33 +88,23 @@ p{line-height:1.5;color:#eee;margin:0 0 14px}
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
-/* =====================================================================
-   CONFIGURACIÓN  (lo único que normalmente hay que tocar)
-   Rutas relativas: poné los archivos dentro de la carpeta /assets del repo.
-   ===================================================================== */
 const CONFIG = {
   model: 'assets/mazairita.glb',
-  robotHeight: 1.3,            // alto de Mazairita en metros
-  idleClip: 'Idle',            // clip en loop mientras espera la respuesta (opcional; si no existe, queda en la última pose)
+  robotHeight: 1.3,
+  idleClip: 'Idle',
   question: '¿Querés conocer más sobre la especialidad?',
-
   scenes: {
-    // clip : nombre del clip dentro del GLB.  from : segundo del clip donde empieza (útil si hay un solo clip largo).
-    // audio: mp3 de la voz (+ foleys si ya vienen mezclados). video: mp4 con sonido, o null.
-    // sfx  : foleys sueltos opcionales, se disparan cuando el audio llega al segundo "at".
-    // next : 'question' (pregunta Sí/No) o 'end' (fin).
-    intro: { clip: 'Intro', from: 0, audio: 'assets/audio/intro.mp3', video: 'assets/video/intro.mp4',       sfx: [], next: 'question' },
+    intro: { clip: 'Intro', from: 0, audio: 'assets/audio/intro.mp3', video: 'assets/video/intro.mp4', sfx: [], next: 'question' },
     si:    { clip: 'Si',    from: 0, audio: 'assets/audio/si.mp3',    video: 'assets/video/explicacion.mp4', sfx: [], next: 'end' },
-    no:    { clip: 'No',    from: 0, audio: 'assets/audio/no.mp3',    video: null,                           sfx: [], next: 'end' }
-    // ejemplo de foley suelto: sfx: [{ src: 'assets/audio/chau.mp3', at: 1.2 }]
+    no:    { clip: 'No',    from: 0, audio: 'assets/audio/no.mp3',    video: null, sfx: [], next: 'end' }
   }
 };
 
-const PANEL_W = 1.2;          // ancho del video en 3D (m)
-const FALLBACK_DIST = 2.4;    // distancia a la que aparece en modo cámara (m)
-const XR_DIST = 2.2;          // distancia si no hay detección de piso (m)
+const PANEL_W = 1.2;
+const FALLBACK_DIST = 2.0;    // Configurado a 2 metros de distancia hacia adelante
+const HEIGHT_OFFSET = 1.60;   // Configurado a 1.60 metros hacia abajo
+const XR_DIST = 2.0;
 
-/* ===================================================================== */
 const $ = s => document.querySelector(s);
 const ui = $('#ui'), startEl = $('#start'), hintEl = $('#hint'), topbar = $('#topbar');
 const questionEl = $('#question'), endbar = $('#endbar');
@@ -124,7 +113,6 @@ const camVideo = $('#cam');
 function setHint(t) { hintEl.textContent = t || ''; hintEl.style.display = t ? 'block' : 'none'; }
 document.querySelectorAll('#ui button').forEach(b => b.addEventListener('beforexrselect', e => e.preventDefault()));
 
-/* ---------- Three.js ---------- */
 const renderer = new THREE.WebGLRenderer({ canvas: $('#gl'), alpha: true, antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
 renderer.setSize(innerWidth, innerHeight);
@@ -137,12 +125,11 @@ const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.05, 5
 scene.add(new THREE.HemisphereLight(0xffffff, 0x888888, 2.2));
 const sun = new THREE.DirectionalLight(0xffffff, 2.2); sun.position.set(2, 4, 3); scene.add(sun);
 
-const stage = new THREE.Group();       // todo el contenido; mira siempre de frente al espectador
+const stage = new THREE.Group();
 stage.visible = false;
 scene.add(stage);
 const robot = new THREE.Group(); stage.add(robot);
 
-/* Panel de video en 3D */
 const panel = new THREE.Group(); panel.visible = false; stage.add(panel);
 const panelMat = new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false });
 const screenMesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), panelMat);
@@ -153,14 +140,12 @@ let panelAspect = 16 / 9;
 function setPanelAspect(a) { panelAspect = a || 16 / 9; panel.scale.set(PANEL_W, PANEL_W / panelAspect, 1); layout(); }
 setPanelAspect(16 / 9);
 
-/* Retícula de colocación (solo AR con detección de piso) */
 const reticle = new THREE.Mesh(
   new THREE.RingGeometry(0.12, 0.16, 32).rotateX(-Math.PI / 2),
   new THREE.MeshBasicMaterial({ color: 0xffffff })
 );
 reticle.matrixAutoUpdate = false; reticle.visible = false; scene.add(reticle);
 
-/* ---------- Estado ---------- */
 let xrMode = false, placed = false, started = false, state = 'idle';
 let mixer = null, clips = [], idleAction = null, placeholder = null;
 let current = null, runId = 0;
@@ -168,9 +153,7 @@ let contentW = 1.2, contentH = 2.1;
 const clock = new THREE.Clock();
 const _v = new THREE.Vector3(), _d = new THREE.Vector3();
 
-/* ---------- Modelo 3D ---------- */
 function buildPlaceholder() {
-  // Robot provisorio por si el GLB todavía no está subido (permite probar todo el flujo)
   const g = new THREE.Group();
   const mat = new THREE.MeshStandardMaterial({ color: 0x9aa7b5, metalness: .4, roughness: .5 });
   const dark = new THREE.MeshStandardMaterial({ color: 0x222831 });
@@ -192,18 +175,16 @@ new GLTFLoader().load(CONFIG.model, gltf => {
   const s = b.getSize(new THREE.Vector3());
   obj.scale.setScalar(CONFIG.robotHeight / (s.y || 1));
   const b2 = new THREE.Box3().setFromObject(obj), c = b2.getCenter(new THREE.Vector3());
-  obj.position.set(-c.x, -b2.min.y, -c.z);               // pies en y=0, centrado
+  obj.position.set(-c.x, -b2.min.y, -c.z);
   robot.add(obj);
   clips = gltf.animations || [];
-  console.info('Clips en el GLB:', clips.map(c => `${c.name} (${c.duration.toFixed(2)}s)`));
   if (clips.length) {
     mixer = new THREE.AnimationMixer(obj);
     const idle = findClip(CONFIG.idleClip);
     if (idle) { idleAction = mixer.clipAction(idle); idleAction.setLoop(THREE.LoopRepeat); }
     if (started && state !== 'intro' && state !== 'si' && state !== 'no') setIdle(true);
-  } else console.warn('El GLB no tiene animaciones.');
+  }
 }, undefined, err => {
-  console.warn('No se pudo cargar', CONFIG.model, '→ uso un robot provisorio.', err);
   placeholder = buildPlaceholder(); robot.add(placeholder);
 });
 
@@ -217,7 +198,6 @@ function setIdle(on) {
   else idleAction.fadeOut(0.2);
 }
 
-/* ---------- Medios (audio + video por escena) ---------- */
 for (const [key, sc] of Object.entries(CONFIG.scenes)) {
   const voice = new Audio(); voice.preload = 'auto'; voice.src = sc.audio;
   let video = null, tex = null;
@@ -233,7 +213,6 @@ for (const [key, sc] of Object.entries(CONFIG.scenes)) {
   sc.rt = { key, voice, video, tex, sfx: (sc.sfx || []).map(s => ({ ...s, el: new Audio(s.src), fired: false })) };
 }
 
-/* Desbloqueo de audio/video: se llama DENTRO del toque del usuario (exigencia de iOS/Android) */
 let unlockP = Promise.resolve();
 function unlockMedia() {
   const els = [];
@@ -267,7 +246,6 @@ function masterTime() {
   return (performance.now() - current.t0) / 1000;
 }
 
-/* ---------- Escenas ---------- */
 function stopCurrent() {
   if (!current) return;
   const { voice, video, sfx } = current.rt;
@@ -285,14 +263,12 @@ async function playScene(key) {
   state = key;
   questionEl.style.display = 'none'; endbar.style.display = 'none';
 
-  // Video en el panel 3D
   if (rt.video) {
     panelMat.map = rt.tex; panelMat.needsUpdate = true; panel.visible = true;
     if (rt.video.videoWidth) setPanelAspect(rt.video.videoWidth / rt.video.videoHeight);
   } else panel.visible = false;
   layout();
 
-  // Animación del GLB (se sincroniza frame a frame con el audio)
   let action = null;
   const clip = findClip(sc.clip);
   if (mixer && clip) {
@@ -300,9 +276,8 @@ async function playScene(key) {
     action = mixer.clipAction(clip);
     action.reset(); action.setLoop(THREE.LoopRepeat); action.setEffectiveWeight(1);
     action.play(); action.paused = true; action.time = sc.from || 0; action.fadeIn(0.15);
-  } else if (mixer) console.warn(`No encuentro el clip "${sc.clip}" para la escena "${key}".`);
+  }
 
-  // Arranque simultáneo de voz + video
   [rt.voice, rt.video, ...rt.sfx.map(s => s.el)].forEach(el => { if (el) { el.__inUse = true; el.muted = false; el.currentTime = 0; } });
   rt.sfx.forEach(s => s.fired = false);
   current = { key, sc, rt, action, clip, t0: performance.now() };
@@ -340,19 +315,14 @@ function updateScene(dt) {
   }
   const t = masterTime();
   const { rt, action, clip, sc } = current;
-  // Sincronía: la animación sigue el reloj del audio
   if (action && clip) action.time = Math.max(0, Math.min((sc.from || 0) + t, clip.duration - 0.001));
-  // El video se corrige si se desfasa del audio
   if (rt.video && !rt.voice.paused && !rt.voice.ended && !rt.video.ended && rt.video.readyState > 1) {
     if (Math.abs(rt.video.currentTime - rt.voice.currentTime) > 0.25) rt.video.currentTime = rt.voice.currentTime;
   }
-  // Foleys sueltos
   rt.sfx.forEach(s => { if (!s.fired && t >= s.at) { s.fired = true; s.el.__inUse = true; s.el.play().catch(() => {}); } });
-  // Movimiento del robot provisorio
   if (placeholder) placeholder.position.y = Math.abs(Math.sin(t * 6)) * 0.02;
 }
 
-/* ---------- Diseño de la escena: horizontal = lado a lado, vertical = video arriba ---------- */
 function layout() {
   const portrait = innerWidth < innerHeight;
   const PH = PANEL_W / panelAspect, H = CONFIG.robotHeight;
@@ -383,7 +353,6 @@ addEventListener('resize', () => {
   layout();
 });
 
-/* ---------- Siempre de frente al espectador (solo giro horizontal) ---------- */
 function faceViewer(snap) {
   camera.updateMatrixWorld();
   _v.setFromMatrixPosition(camera.matrixWorld);
@@ -394,7 +363,6 @@ function faceViewer(snap) {
   stage.rotation.y += diff * 0.12;
 }
 
-/* ---------- Comienzo de la experiencia ---------- */
 function beginExperience() {
   if (started) return;
   started = true;
@@ -404,7 +372,6 @@ function beginExperience() {
   playScene('intro');
 }
 
-/* ======================= MODO AR (WebXR: Android/Chrome con ARCore) ======================= */
 let xrSession = null, hitSource = null;
 
 async function startXR() {
@@ -423,14 +390,12 @@ async function startXR() {
     try {
       const viewer = await session.requestReferenceSpace('viewer');
       hitSource = await session.requestHitTestSource({ space: viewer });
-    } catch (e) { hitSource = null; console.warn('Sin hit-test; se ubicará frente al usuario.', e); }
+    } catch (e) { hitSource = null; }
     session.addEventListener('select', onSelectXR);
     session.addEventListener('end', () => location.reload());
     placed = false; stage.visible = false;
-    setHint(hitSource ? 'Mové el celular despacio para detectar el piso y tocá la pantalla para ubicar a Mazairita'
-                      : 'Tocá la pantalla para ubicar a Mazairita frente a vos');
+    setHint(hitSource ? 'Mové el celular despacio para detectar el piso y tocá la pantalla para ubicar a Mazairita' : 'Tocá la pantalla para ubicar a Mazairita frente a vos');
   } catch (e) {
-    console.error(e);
     xrMode = false;
     alert('No se pudo iniciar la realidad aumentada. Probá el modo cámara.\n' + (e.message || e));
   }
@@ -441,14 +406,18 @@ function onSelectXR() {
   camera.updateMatrixWorld(true);
   const camPos = new THREE.Vector3().setFromMatrixPosition(camera.matrixWorld);
   const pos = new THREE.Vector3();
-  if (reticle.visible) pos.setFromMatrixPosition(reticle.matrix);
-  else {
+  if (reticle.visible) {
+    pos.setFromMatrixPosition(reticle.matrix);
+  } else {
     camera.getWorldDirection(_d); _d.y = 0;
     if (_d.lengthSq() < 1e-4) _d.set(0, 0, -1);
-    pos.copy(camPos).addScaledVector(_d.normalize(), XR_DIST); pos.y = camPos.y - 1.3;
+    pos.copy(camPos).addScaledVector(_d.normalize(), XR_DIST); 
   }
+  // Aplicamos el desplazamiento de 1.60m hacia abajo respecto a la posición calculada
+  pos.y -= HEIGHT_OFFSET;
+
   stage.position.copy(pos);
-  stage.scale.setScalar(THREE.MathUtils.clamp(camPos.distanceTo(pos) / 2.4, 0.5, 1.8));
+  stage.scale.setScalar(THREE.MathUtils.clamp(camPos.distanceTo(pos) / 2.0, 0.5, 1.8));
   layout();
   faceViewer(true);
   stage.visible = true; placed = true; reticle.visible = false;
@@ -457,7 +426,6 @@ function onSelectXR() {
   if (!started) beginExperience();
 }
 
-/* ======================= MODO CÁMARA + GIROSCOPIO (iPhone y resto) ======================= */
 const zee = new THREE.Vector3(0, 0, 1), euler = new THREE.Euler(), q0 = new THREE.Quaternion();
 const q1 = new THREE.Quaternion(-Math.sqrt(0.5), 0, 0, Math.sqrt(0.5));
 const devQ = new THREE.Quaternion();
@@ -478,8 +446,12 @@ function placeFallback() {
   camera.getWorldDirection(_d); _d.y = 0;
   if (_d.lengthSq() < 1e-4) _d.set(0, 0, -1);
   _d.normalize().multiplyScalar(FALLBACK_DIST);
-  stage.position.set(_d.x, 0, _d.z);
-  layout();                    // calcula escala y altura
+  
+  const camPos = new THREE.Vector3().setFromMatrixPosition(camera.matrixWorld);
+  // Colocamos el escenario a 2 metros adelante y restamos 1.60 metros en el eje Y (hacia abajo)
+  stage.position.set(camPos.x + _d.x, camPos.y - HEIGHT_OFFSET, camPos.z + _d.z);
+
+  layout();
   faceViewer(true);
   stage.visible = true; placed = true;
 }
@@ -494,17 +466,16 @@ async function startCamera() {
       if (r !== 'granted') throw new Error('sin permiso de sensores');
     }
     addEventListener('deviceorientation', onOrient, true);
-  } catch (e) { console.warn('Sensores no disponibles', e); }
+  } catch (e) {}
   try {
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('Este navegador no permite usar la cámara (usá HTTPS).');
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('HTTPS requerido');
     const stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } } });
     camVideo.srcObject = stream; await camVideo.play();
     document.body.classList.add('camon');
   } catch (e) {
-    console.warn('Cámara no disponible', e);
-    setHint('No se pudo activar la cámara; se muestra sin fondo. Revisá el permiso del sitio.');
+    setHint('No se pudo activar la cámara; se muestra sin fondo.');
   }
-  setTimeout(() => {          // sin giroscopio (por ejemplo en una PC): se mira arrastrando
+  setTimeout(() => {
     if (!gyroReady) {
       dragMode = true; placeFallback(); beginExperience();
       setHint('Arrastrá con el dedo o el mouse para mirar alrededor');
@@ -513,7 +484,6 @@ async function startCamera() {
   }, 1800);
 }
 
-/* Control por arrastre (respaldo) */
 let dragging = false, lx = 0, ly = 0;
 addEventListener('pointerdown', e => { if (dragMode && !e.target.closest('button')) { dragging = true; lx = e.clientX; ly = e.clientY; } });
 addEventListener('pointerup', () => dragging = false);
@@ -523,7 +493,6 @@ addEventListener('pointermove', e => {
   lx = e.clientX; ly = e.clientY;
 });
 
-/* ---------- Botones ---------- */
 $('#btnXR').onclick = startXR;
 $('#btnCam').onclick = startCamera;
 $('#btnExit').onclick = () => { if (xrSession) xrSession.end(); else location.reload(); };
@@ -538,7 +507,6 @@ if (navigator.xr && navigator.xr.isSessionSupported) {
   }).catch(() => {});
 }
 
-/* ---------- Bucle de render ---------- */
 renderer.setAnimationLoop((time, frame) => {
   const dt = Math.min(clock.getDelta(), 0.05);
 
@@ -556,7 +524,7 @@ renderer.setAnimationLoop((time, frame) => {
     else if (dragMode) camera.rotation.set(pitch, yaw, 0, 'YXZ');
   }
 
-  updateScene(dt);          // fija el tiempo de la animación según el audio
+  updateScene(dt);
   if (mixer) mixer.update(dt);
   if (stage.visible) faceViewer(false);
   renderer.render(scene, camera);
