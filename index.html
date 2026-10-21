@@ -1,0 +1,361 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#111">
+<title>Mazairita · Realidad aumentada</title>
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#000;color:#fff;font-family:system-ui,sans-serif}
+#camera,#three{position:fixed;inset:0;width:100%;height:100%}
+#camera{object-fit:cover}
+#three{pointer-events:none}
+#scan{display:none}
+
+#intro{position:fixed;inset:0;z-index:10;display:flex;align-items:center;justify-content:center;padding:24px;background:linear-gradient(150deg,#151515,#333);text-align:center}
+#panel{max-width:440px}
+h1{font-size:30px;margin:0 0 12px}
+p{line-height:1.5;color:#eee}
+button{border:0;border-radius:14px;padding:14px 20px;font-size:16px;font-weight:700;cursor:pointer}
+#start{background:#fff;color:#111}
+
+#status{position:fixed;z-index:5;top:calc(12px + env(safe-area-inset-top));left:12px;right:12px;padding:10px;text-align:center;border-radius:12px;background:#0009;font-size:14px;pointer-events:none}
+
+/* Globo de diálogo al costado de Mazairita */
+#bubble{position:fixed;z-index:7;display:none;width:min(46vw,260px);padding:12px 14px;border-radius:16px;background:#fff;color:#111;font-size:15px;line-height:1.4;box-shadow:0 6px 20px #0006;pointer-events:none}
+#bubble b{display:block;margin-bottom:4px;font-size:13px;letter-spacing:.04em;text-transform:uppercase;color:#555}
+#bubble::after{content:"";position:absolute;top:22px;border:10px solid transparent}
+#bubble.right::after{left:-18px;border-right-color:#fff}
+#bubble.left::after{right:-18px;border-left-color:#fff}
+
+#choice{position:fixed;z-index:6;bottom:calc(20px + env(safe-area-inset-bottom));left:0;right:0;display:none;justify-content:center;gap:14px}
+.choice{width:min(38vw,180px);padding:0;background:transparent}
+.choice img{width:100%;height:auto;filter:drop-shadow(0 4px 12px #0008)}
+
+#media{position:fixed;inset:0;z-index:8;display:none;align-items:center;justify-content:center;background:#000c;padding:16px}
+#box{width:min(95vw,720px);position:relative}
+#response{width:100%;max-height:80vh;background:#000}
+#close{position:absolute;right:6px;top:6px;z-index:2;border-radius:50%;padding:8px 12px}
+</style>
+</head>
+<body>
+
+<video id="camera" playsinline muted autoplay></video>
+<canvas id="scan"></canvas>
+<canvas id="three"></canvas>
+
+<div id="intro">
+  <div id="panel">
+    <h1>Mazairita en realidad aumentada</h1>
+    <p>Activá la cámara y apuntá al código QR. Cuando el teléfono lo detecte, aparecerá Mazairita y se habilitarán las opciones.</p>
+    <button id="start">Activar cámara</button>
+    <p style="font-size:12px;color:#bbb">Requiere HTTPS y permiso para usar la cámara.</p>
+  </div>
+</div>
+
+<div id="status">Apuntá la cámara al código QR</div>
+
+<div id="bubble"><b>Mazairita</b><span id="bubbleText"></span></div>
+
+<div id="choice">
+  <button class="choice" id="yes"><img alt="Sí" src="https://user.cdn.mywebar.com/860448/BOTON__SI__1789653740658.png?hash=b313e32bfd1c15eb7fa6eb33bcf47f70&amp;_=1789655917369"></button>
+  <button class="choice" id="no"><img alt="No" src="https://user.cdn.mywebar.com/860448/BOTON__NO__1789653774074.png?hash=4735fdfd5f3cc99e73426affce64e2fc&amp;_=1789655917369"></button>
+</div>
+
+<div id="media">
+  <div id="box">
+    <button id="close">✕</button>
+    <video id="response" playsinline controls></video>
+  </div>
+</div>
+
+<!-- Librerías -->
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+<!-- Compatibilidad de importmap con navegadores viejos (Safari < 16.4, etc.) -->
+<script async src="https://cdn.jsdelivr.net/npm/es-module-shims@1.10.0/dist/es-module-shims.js"></script>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+  }
+}
+</script>
+
+<!-- 1) Activación de la cámara -->
+<script>
+(() => {
+  const start = document.getElementById('start');
+  const camera = document.getElementById('camera');
+  const intro = document.getElementById('intro');
+  const status = document.getElementById('status');
+
+  start.addEventListener('click', async () => {
+    start.disabled = true;
+    start.textContent = 'Activando cámara…';
+    status.textContent = 'Solicitando permiso para la cámara…';
+    try {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error('Este navegador no permite acceder a la cámara. Abrí la página con HTTPS en Chrome o Safari actualizado.');
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }
+      });
+      camera.srcObject = stream;
+      await camera.play();
+      intro.style.display = 'none';
+      status.textContent = 'Cámara activada. Buscando el código QR…';
+      // Bandera + evento: así funciona aunque el módulo 3D termine de cargar después del clic
+      window.__camReady = true;
+      window.dispatchEvent(new Event('camera-ready'));
+    } catch (err) {
+      console.error('No se pudo activar la cámara:', err);
+      status.textContent = 'No se pudo activar la cámara.';
+      alert('No se pudo activar la cámara. Revisá el permiso del sitio y usá la URL HTTPS. Detalle: ' + (err.message || err.name || 'error desconocido'));
+      start.disabled = false;
+      start.textContent = 'Intentar activar cámara nuevamente';
+    }
+  });
+})();
+</script>
+
+<!-- 2) Realidad aumentada: detección de QR + Mazairita -->
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+/* ====== CONFIGURACIÓN ====== */
+const MODEL  = 'https://user.cdn.mywebar.com/860448/MAZAIRITA_VERSION_FINAL_APARICION_Y_SALUDO_1791383762681.glb';
+const YESVID = 'https://user.cdn.mywebar.com/860448/despedida_1789655906394.mp4';
+const NOVID  = 'https://user.cdn.mywebar.com/860448/MARCO_TEXTO_1790173626964.mp4';
+const WELCOME = '¡Hola! Soy Mazairita, tu guía por la especialidad de Producción Multimedial. Te voy a contar qué se aprende en cada año, de 3° a 6°. ¿Querés conocer más?';
+const LOOP_ANIMATION = false;   // false = la animación (aparición + saludo) se reproduce una vez cada vez que aparece
+const LOST_TIMEOUT   = 700;     // ms sin ver el QR antes de ocultar a Mazairita
+const SCAN_WIDTH     = 640;     // ancho al que se reduce la imagen para buscar el QR (más rápido)
+const MODEL_UNITS    = 1.8;     // altura a la que se normaliza el modelo
+/* =========================== */
+
+const $ = s => document.querySelector(s);
+const cam = $('#camera'), canvas = $('#scan');
+const ctx = canvas.getContext('2d', { willReadFrequently: true });
+const statusEl = $('#status'), choice = $('#choice'), media = $('#media'), response = $('#response');
+const bubble = $('#bubble'), bubbleText = $('#bubbleText');
+
+/* ---- Three.js ---- */
+const renderer = new THREE.WebGLRenderer({ canvas: $('#three'), alpha: true, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.setClearColor(0x000000, 0);
+
+const scene = new THREE.Scene();
+const cam3d = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.01, 100);
+cam3d.position.set(0, 0, 5);
+scene.add(new THREE.HemisphereLight(0xffffff, 0x777777, 2));
+const light = new THREE.DirectionalLight(0xffffff, 2);
+light.position.set(2, 4, 5);
+scene.add(light);
+
+const root = new THREE.Group();
+root.visible = false;
+scene.add(root);
+
+let ready = false, active = false, mediaOpen = false;
+let lastScan = 0, lastSeen = 0, wasVisible = false;
+let mixer = null, actions = [];
+const target = { x: 0, y: 0, s: 1 };
+let hasTarget = false;
+const clock = new THREE.Clock();
+
+new GLTFLoader().load(MODEL, g => {
+  const obj = g.scene;
+  const box = new THREE.Box3().setFromObject(obj);
+  const size = box.getSize(new THREE.Vector3());
+  const center = box.getCenter(new THREE.Vector3());
+  obj.position.sub(center);
+  obj.scale.setScalar(MODEL_UNITS / (Math.max(size.x, size.y, size.z) || 1));
+  root.add(obj);
+
+  if (g.animations && g.animations.length) {
+    mixer = new THREE.AnimationMixer(obj);
+    actions = g.animations.map(clip => {
+      const a = mixer.clipAction(clip);
+      if (!LOOP_ANIMATION) { a.setLoop(THREE.LoopOnce, 1); a.clampWhenFinished = true; }
+      return a;
+    });
+    console.info('Animaciones:', g.animations.map(a => a.name));
+  } else {
+    console.warn('El GLB no contiene animaciones.');
+  }
+  ready = true;
+}, undefined, e => {
+  console.error('Error cargando modelo 3D', e);
+  statusEl.textContent = 'No se pudo cargar a Mazairita (revisá la conexión).';
+});
+
+function playAnimation() {
+  actions.forEach(a => a.reset().play());
+}
+
+function renderLoop() {
+  requestAnimationFrame(renderLoop);
+  const delta = Math.min(clock.getDelta(), 0.05);
+  if (mixer) mixer.update(delta);
+  if (hasTarget) { // suavizado para que no tiemble
+    const k = 0.35;
+    root.position.x += (target.x - root.position.x) * k;
+    root.position.y += (target.y - root.position.y) * k;
+    const s = root.scale.x + (target.s - root.scale.x) * k;
+    root.scale.setScalar(s);
+  }
+  renderer.render(scene, cam3d);
+}
+renderLoop();
+
+addEventListener('resize', () => {
+  renderer.setSize(innerWidth, innerHeight);
+  cam3d.aspect = innerWidth / innerHeight;
+  cam3d.updateProjectionMatrix();
+});
+
+/* ---- Texto con efecto máquina de escribir ---- */
+let typeTimer = null;
+function typeText(text) {
+  clearInterval(typeTimer);
+  bubbleText.textContent = '';
+  let i = 0;
+  typeTimer = setInterval(() => {
+    bubbleText.textContent = text.slice(0, ++i);
+    if (i >= text.length) clearInterval(typeTimer);
+  }, 28);
+}
+
+/* ---- Detección de QR ---- */
+function startScanning() {
+  if (active) return;
+  active = true;
+  statusEl.textContent = 'Buscando el código QR…';
+  requestAnimationFrame(scanLoop);
+}
+if (window.__camReady) startScanning();
+addEventListener('camera-ready', startScanning);
+
+function scanLoop(t) {
+  if (!active) return;
+  requestAnimationFrame(scanLoop);
+  if (t - lastScan < 80 || cam.readyState < 2) return;
+  lastScan = t;
+
+  const vw = cam.videoWidth, vh = cam.videoHeight;
+  if (!vw || !vh) return;
+
+  // Se analiza una versión reducida de la imagen (mucho más rápido en celulares)
+  const sw = Math.min(vw, SCAN_WIDTH), sh = Math.round(vh * sw / vw);
+  if (canvas.width !== sw || canvas.height !== sh) { canvas.width = sw; canvas.height = sh; }
+  ctx.drawImage(cam, 0, 0, sw, sh);
+  const img = ctx.getImageData(0, 0, sw, sh);
+  const code = window.jsQR ? window.jsQR(img.data, sw, sh, { inversionAttempts: 'dontInvert' }) : null;
+
+  if (code && code.location) {
+    lastSeen = performance.now();
+    const p = code.location;
+    const pts = [p.topLeftCorner, p.topRightCorner, p.bottomRightCorner, p.bottomLeftCorner];
+    const cx = pts.reduce((a, q) => a + q.x, 0) / 4 / sw;   // 0..1 dentro del video
+    const cy = pts.reduce((a, q) => a + q.y, 0) / 4 / sh;
+    const edge = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y) / sw;
+
+    // El <video> usa object-fit:cover: se recorta. Convertimos coordenadas de video -> pantalla.
+    const W = innerWidth, H = innerHeight;
+    const k = Math.max(W / vw, H / vh);
+    const screenX = cx * vw * k - (vw * k - W) / 2;
+    const screenY = cy * vh * k - (vh * k - H) / 2;
+    const edgePx  = edge * vw * k;
+
+    // Pantalla -> mundo 3D (plano z=0, la cámara está en z=5)
+    const dist = cam3d.position.z;
+    const hh = 2 * Math.tan(THREE.MathUtils.degToRad(cam3d.fov) / 2) * dist; // alto visible en el mundo
+    const hw = hh * cam3d.aspect;
+
+    const heightPx = Math.max(H * 0.22, Math.min(H * 0.6, edgePx * 2.6));    // alto de Mazairita en pantalla
+    const worldH = heightPx / H * hh;
+    target.s = worldH / MODEL_UNITS;
+    target.x = (screenX / W * 2 - 1) * hw / 2;
+    target.y = (1 - screenY / H * 2) * hh / 2 + worldH * 0.3;                // "parada" sobre el QR
+    if (!hasTarget || !root.visible) {
+      root.position.set(target.x, target.y, 0);
+      root.scale.setScalar(target.s);
+    }
+    hasTarget = true;
+
+    if (!mediaOpen) {
+      if (!wasVisible && ready) { playAnimation(); typeText(WELCOME); }
+      root.visible = ready;
+      wasVisible = true;
+      choice.style.display = 'flex';
+      placeBubble(screenX, screenY - heightPx * 0.3, heightPx);
+      statusEl.textContent = '¡QR detectado! Mantenelo dentro de la cámara.';
+    }
+  } else if (performance.now() - lastSeen > LOST_TIMEOUT) {
+    root.visible = false;
+    wasVisible = false;
+    hasTarget = false;
+    choice.style.display = 'none';
+    bubble.style.display = 'none';
+    clearInterval(typeTimer);
+    if (!mediaOpen) statusEl.textContent = 'Apuntá la cámara al código QR';
+  }
+}
+
+/* Coloca el globo de texto al costado de Mazairita (del lado que tenga más lugar) */
+function placeBubble(cx, cy, heightPx) {
+  const W = innerWidth, H = innerHeight;
+  const halfW = heightPx * 0.32;                  // mitad del ancho aprox. del robot
+  bubble.style.display = 'block';
+  const bw = bubble.offsetWidth, bh = bubble.offsetHeight;
+  let side = (cx > W / 2) ? 'left' : 'right';     // si el robot está a la derecha, el globo va a su izquierda
+  let left = side === 'right' ? cx + halfW + 12 : cx - halfW - 12 - bw;
+  if (left < 8 || left + bw > W - 8) {            // si no entra, probar el otro lado
+    side = side === 'right' ? 'left' : 'right';
+    left = side === 'right' ? cx + halfW + 12 : cx - halfW - 12 - bw;
+  }
+  left = Math.max(8, Math.min(W - bw - 8, left));
+  const top = Math.max(60, Math.min(H - bh - 140, cy - bh / 2));
+  bubble.style.left = left + 'px';
+  bubble.style.top = top + 'px';
+  bubble.className = side;
+}
+
+/* ---- Videos de respuesta ---- */
+function showVideo(url) {
+  mediaOpen = true;
+  root.visible = false;
+  choice.style.display = 'none';
+  bubble.style.display = 'none';
+  response.pause();
+  response.src = url;
+  media.style.display = 'flex';
+  response.load();
+  response.play().catch(() => {});
+}
+function closeVideo() {
+  response.pause();
+  response.removeAttribute('src');
+  response.load();
+  media.style.display = 'none';
+  mediaOpen = false;
+  wasVisible = false; // al volver a ver el QR, Mazairita saluda de nuevo
+}
+$('#yes').onclick = () => showVideo(YESVID);
+$('#no').onclick = () => showVideo(NOVID);
+$('#close').onclick = closeVideo;
+media.onclick = e => { if (e.target === media) closeVideo(); };
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) cam.pause();
+  else if (active) cam.play().catch(() => {});
+});
+</script>
+</body>
+</html>
