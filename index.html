@@ -87,4 +87,454 @@ p{line-height:1.5;color:#eee;margin:0 0 14px}
 
 <script type="module">
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/addons
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+const CONFIG = {
+  model: 'assets/mazairita.glb',
+  robotHeight: 1.3,
+  idleClip: 'Idle',
+  question: '¿Querés conocer más sobre la especialidad?',
+  scenes: {
+    intro: { clip: 'Intro', from: 0, audio: 'assets/audio/intro.mp3', video: 'assets/video/intro.mp4', sfx: [], next: 'question' },
+    si:    { clip: 'Si',    from: 0, audio: 'assets/audio/si.mp3',    video: 'assets/video/explicacion.mp4', sfx: [], next: 'end' },
+    no:    { clip: 'No',    from: 0, audio: 'assets/audio/no.mp3',    video: null, sfx: [], next: 'end' }
+  }
+};
+
+const PANEL_W = 1.2;
+const FALLBACK_DIST = 2.0;    // 2 metros hacia adelante
+const HEIGHT_OFFSET = 1.60;   // 1.60 metros hacia abajo
+const XR_DIST = 2.0;
+
+const $ = s => document.querySelector(s);
+const ui = $('#ui'), startEl = $('#start'), hintEl = $('#hint'), topbar = $('#topbar');
+const questionEl = $('#question'), endbar = $('#endbar');
+const camVideo = $('#cam');
+
+function setHint(t) { hintEl.textContent = t || ''; hintEl.style.display = t ? 'block' : 'none'; }
+document.querySelectorAll('#ui button').forEach(b => b.addEventListener('beforexrselect', e => e.preventDefault()));
+
+const renderer = new THREE.WebGLRenderer({ canvas: $('#gl'), alpha: true, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.setClearColor(0x000000, 0);
+renderer.xr.enabled = true;
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.05, 50);
+scene.add(new THREE.HemisphereLight(0xffffff, 0x888888, 2.2));
+const sun = new THREE.DirectionalLight(0xffffff, 2.2); sun.position.set(2, 4, 3); scene.add(sun);
+
+const stage = new THREE.Group();
+stage.visible = false;
+scene.add(stage);
+const robot = new THREE.Group(); stage.add(robot);
+
+const panel = new THREE.Group(); panel.visible = false; stage.add(panel);
+const panelMat = new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false });
+const screenMesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), panelMat);
+const frameMesh = new THREE.Mesh(new THREE.PlaneGeometry(1.04, 1.06), new THREE.MeshBasicMaterial({ color: 0x111111 }));
+frameMesh.position.z = -0.004;
+panel.add(frameMesh, screenMesh);
+let panelAspect = 16 / 9;
+function setPanelAspect(a) { panelAspect = a || 16 / 9; panel.scale.set(PANEL_W, PANEL_W / panelAspect, 1); layout(); }
+setPanelAspect(16 / 9);
+
+const reticle = new THREE.Mesh(
+  new THREE.RingGeometry(0.12, 0.16, 32).rotateX(-Math.PI / 2),
+  new THREE.MeshBasicMaterial({ color: 0xffffff })
+);
+reticle.matrixAutoUpdate = false; reticle.visible = false; scene.add(reticle);
+
+let xrMode = false, placed = false, started = false, state = 'idle';
+let mixer = null, clips = [], idleAction = null, placeholder = null;
+let current = null, runId = 0;
+let contentW = 1.2, contentH = 2.1;
+const clock = new THREE.Clock();
+const _v = new THREE.Vector3(), _d = new THREE.Vector3();
+
+function buildPlaceholder() {
+  const g = new THREE.Group();
+  const mat = new THREE.MeshStandardMaterial({ color: 0x9aa7b5, metalness: .4, roughness: .5 });
+  const dark = new THREE.MeshStandardMaterial({ color: 0x222831 });
+  const eye = new THREE.MeshStandardMaterial({ color: 0x2ee6ff, emissive: 0x2ee6ff, emissiveIntensity: 1.2 });
+  const H = CONFIG.robotHeight;
+  const body = new THREE.Mesh(new THREE.BoxGeometry(.5, H * .45, .32), mat); body.position.y = H * .42;
+  const head = new THREE.Mesh(new THREE.BoxGeometry(.4, .34, .34), mat); head.position.y = H * .42 + H * .225 + .2;
+  const face = new THREE.Mesh(new THREE.BoxGeometry(.3, .16, .02), dark); face.position.set(0, head.position.y, .175);
+  const e1 = new THREE.Mesh(new THREE.BoxGeometry(.07, .07, .02), eye); e1.position.set(-.08, head.position.y, .19);
+  const e2 = e1.clone(); e2.position.x = .08;
+  const legs = new THREE.Mesh(new THREE.BoxGeometry(.4, H * .2, .25), dark); legs.position.y = H * .1;
+  g.add(body, head, face, e1, e2, legs);
+  return g;
+}
+
+new GLTFLoader().load(CONFIG.model, gltf => {
+  const obj = gltf.scene;
+  const b = new THREE.Box3().setFromObject(obj);
+  const s = b.getSize(new THREE.Vector3());
+  obj.scale.setScalar(CONFIG.robotHeight / (s.y || 1));
+  const b2 = new THREE.Box3().setFromObject(obj), c = b2.getCenter(new THREE.Vector3());
+  obj.position.set(-c.x, -b2.min.y, -c.z);
+  robot.add(obj);
+  clips = gltf.animations || [];
+  if (clips.length) {
+    mixer = new THREE.AnimationMixer(obj);
+    const idle = findClip(CONFIG.idleClip);
+    if (idle) { idleAction = mixer.clipAction(idle); idleAction.setLoop(THREE.LoopRepeat); }
+    if (started && state !== 'intro' && state !== 'si' && state !== 'no') setIdle(true);
+  }
+}, undefined, err => {
+  placeholder = buildPlaceholder(); robot.add(placeholder);
+});
+
+function findClip(name) {
+  if (!name) return null;
+  return clips.find(c => c.name === name) || clips.find(c => c.name.toLowerCase() === name.toLowerCase()) || null;
+}
+function setIdle(on) {
+  if (!idleAction) return;
+  if (on) idleAction.reset().setEffectiveWeight(1).fadeIn(0.35).play();
+  else idleAction.fadeOut(0.2);
+}
+
+for (const [key, sc] of Object.entries(CONFIG.scenes)) {
+  const voice = new Audio(); voice.preload = 'auto'; voice.src = sc.audio;
+  let video = null, tex = null;
+  if (sc.video) {
+    video = document.createElement('video');
+    video.setAttribute('playsinline', ''); video.setAttribute('webkit-playsinline', '');
+    video.playsInline = true; video.preload = 'auto'; video.src = sc.video;
+    video.style.cssText = 'position:fixed;left:0;top:0;width:2px;height:2px;opacity:0;pointer-events:none';
+    document.body.appendChild(video);
+    tex = new THREE.VideoTexture(video); tex.colorSpace = THREE.SRGBColorSpace;
+    video.addEventListener('loadedmetadata', () => { if (current && current.rt.video === video) setPanelAspect(video.videoWidth / video.videoHeight); });
+  }
+  sc.rt = { key, voice, video, tex, sfx: (sc.sfx || []).map(s => ({ ...s, el: new Audio(s.src), fired: false })) };
+}
+
+let unlockP = Promise.resolve();
+function unlockMedia() {
+  const els = [];
+  Object.values(CONFIG.scenes).forEach(sc => { els.push(sc.rt.voice); if (sc.rt.video) els.push(sc.rt.video); sc.rt.sfx.forEach(s => els.push(s.el)); });
+  const ps = els.map(el => new Promise(res => {
+    try {
+      el.muted = true;
+      const p = el.play();
+      if (!p) { el.muted = false; return res(); }
+      p.then(() => { if (!el.__inUse) { el.pause(); el.currentTime = 0; } el.muted = false; res(); })
+       .catch(() => { el.muted = false; res(); });
+    } catch (e) { el.muted = false; res(); }
+  }));
+  unlockP = Promise.race([Promise.all(ps), new Promise(r => setTimeout(r, 4000))]);
+}
+
+function playAndWait(el) {
+  return new Promise(res => {
+    el.addEventListener('ended', res, { once: true });
+    el.addEventListener('error', res, { once: true });
+    el.play().catch(res);
+  });
+}
+
+function masterTime() {
+  if (!current) return 0;
+  const { voice, video } = current.rt;
+  if (!voice.error && voice.readyState > 0 && !voice.paused) return voice.currentTime;
+  if (voice.ended) return voice.duration || 0;
+  if (video && !video.error && video.readyState > 0 && !video.paused) return video.currentTime;
+  return (performance.now() - current.t0) / 1000;
+}
+
+function stopCurrent() {
+  if (!current) return;
+  const { voice, video, sfx } = current.rt;
+  [voice, video, ...sfx.map(s => s.el)].forEach(el => { if (el) { el.pause(); el.__inUse = false; } });
+  if (current.action) current.action.fadeOut(0.15);
+  current = null;
+}
+
+async function playScene(key) {
+  const my = ++runId;
+  await unlockP;
+  if (my !== runId) return;
+  stopCurrent();
+  const sc = CONFIG.scenes[key], rt = sc.rt;
+  state = key;
+  questionEl.style.display = 'none'; endbar.style.display = 'none';
+
+  if (rt.video) {
+    panelMat.map = rt.tex; panelMat.needsUpdate = true; panel.visible = true;
+    if (rt.video.videoWidth) setPanelAspect(rt.video.videoWidth / rt.video.videoHeight);
+  } else panel.visible = false;
+  layout();
+
+  let action = null;
+  const clip = findClip(sc.clip);
+  if (mixer && clip) {
+    setIdle(false);
+    action = mixer.clipAction(clip);
+    action.reset(); action.setLoop(THREE.LoopRepeat); action.setEffectiveWeight(1);
+    action.play(); action.paused = true; action.time = sc.from || 0; action.fadeIn(0.15);
+  }
+
+  [rt.voice, rt.video, ...rt.sfx.map(s => s.el)].forEach(el => { if (el) { el.__inUse = true; el.muted = false; el.currentTime = 0; } });
+  rt.sfx.forEach(s => s.fired = false);
+  current = { key, sc, rt, action, clip, t0: performance.now() };
+  const waits = [playAndWait(rt.voice)];
+  if (rt.video) waits.push(playAndWait(rt.video));
+  await Promise.all(waits);
+  if (my !== runId) return;
+  finishScene(sc);
+}
+
+function finishScene(sc) {
+  const a = current && current.action;
+  if (a) { a.time = Math.min((sc.from || 0) + masterTime(), a.getClip().duration - 0.001); }
+  if (idleAction) { if (a) a.fadeOut(0.4); }
+  if (sc.next === 'question') {
+    state = 'question'; setIdle(true);
+    $('#qtext').textContent = CONFIG.question;
+    questionEl.style.display = 'flex';
+  } else {
+    state = 'end'; setIdle(true);
+    endbar.style.display = 'flex';
+  }
+  if (current) { [current.rt.voice, current.rt.video].forEach(el => { if (el) el.__inUse = false; }); }
+  current = null;
+}
+
+$('#yes').onclick = () => playScene('si');
+$('#no').onclick = () => playScene('no');
+$('#btnAgain').onclick = () => playScene('intro');
+
+function updateScene(dt) {
+  if (!current) {
+    if (placeholder && stage.visible) placeholder.position.y = 0;
+    return;
+  }
+  const t = masterTime();
+  const { rt, action, clip, sc } = current;
+  if (action && clip) action.time = Math.max(0, Math.min((sc.from || 0) + t, clip.duration - 0.001));
+  if (rt.video && !rt.voice.paused && !rt.voice.ended && !rt.video.ended && rt.video.readyState > 1) {
+    if (Math.abs(rt.video.currentTime - rt.voice.currentTime) > 0.25) rt.video.currentTime = rt.voice.currentTime;
+  }
+  rt.sfx.forEach(s => { if (!s.fired && t >= s.at) { s.fired = true; s.el.__inUse = true; s.el.play().catch(() => {}); } });
+  if (placeholder) placeholder.position.y = Math.abs(Math.sin(t * 6)) * 0.02;
+}
+
+function layout() {
+  const portrait = innerWidth < innerHeight;
+  const PH = PANEL_W / panelAspect, H = CONFIG.robotHeight;
+  const hasPanel = panel.visible;
+  if (portrait) {
+    robot.position.set(0, 0, 0);
+    panel.position.set(0, H + 0.12 + PH / 2, 0);
+    contentW = hasPanel ? PANEL_W : 0.8;
+    contentH = hasPanel ? H + 0.12 + PH : H;
+  } else {
+    robot.position.set(hasPanel ? -0.75 : 0, 0, 0);
+    panel.position.set(0.75, PH / 2 + 0.15, 0);
+    contentW = hasPanel ? 2.4 : 0.8;
+    contentH = Math.max(H, hasPanel ? PH + 0.15 : 0);
+  }
+  if (!xrMode) {
+    const visH = 2 * FALLBACK_DIST * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2);
+    const visW = visH * camera.aspect;
+    const fit = Math.min(1, visW * 0.9 / contentW, visH * 0.85 / contentH);
+    stage.scale.setScalar(fit);
+    stage.position.y = -contentH * fit / 2;
+  }
+}
+
+addEventListener('resize', () => {
+  if (!renderer.xr.isPresenting) renderer.setSize(innerWidth, innerHeight);
+  camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+  layout();
+});
+
+function faceViewer(snap) {
+  camera.updateMatrixWorld();
+  _v.setFromMatrixPosition(camera.matrixWorld);
+  const target = Math.atan2(_v.x - stage.position.x, _v.z - stage.position.z);
+  if (snap) { stage.rotation.y = target; return; }
+  let diff = target - stage.rotation.y;
+  diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+  stage.rotation.y += diff * 0.12;
+}
+
+function beginExperience() {
+  if (started) return;
+  started = true;
+  stage.visible = true;
+  setHint('');
+  topbar.style.display = 'flex';
+  playScene('intro');
+}
+
+let xrSession = null, hitSource = null;
+
+async function startXR() {
+  unlockMedia();
+  try {
+    const session = await navigator.xr.requestSession('immersive-ar', {
+      requiredFeatures: ['local'],
+      optionalFeatures: ['hit-test', 'dom-overlay'],
+      domOverlay: { root: ui }
+    });
+    xrSession = session; xrMode = true;
+    renderer.xr.setReferenceSpaceType('local');
+    await renderer.xr.setSession(session);
+    document.body.classList.add('xr');
+    startEl.style.display = 'none';
+    try {
+      const viewer = await session.requestReferenceSpace('viewer');
+      hitSource = await session.requestHitTestSource({ space: viewer });
+    } catch (e) { hitSource = null; }
+    session.addEventListener('select', onSelectXR);
+    session.addEventListener('end', () => location.reload());
+    placed = false; stage.visible = false;
+    setHint(hitSource ? 'Mové el celular despacio para detectar el piso y tocá la pantalla para ubicar a Mazairita' : 'Tocá la pantalla para ubicar a Mazairita frente a vos');
+  } catch (e) {
+    xrMode = false;
+    alert('No se pudo iniciar la realidad aumentada. Probá el modo cámara.\n' + (e.message || e));
+  }
+}
+
+function onSelectXR() {
+  if (placed) return;
+  camera.updateMatrixWorld(true);
+  const camPos = new THREE.Vector3().setFromMatrixPosition(camera.matrixWorld);
+  const pos = new THREE.Vector3();
+  if (reticle.visible) {
+    pos.setFromMatrixPosition(reticle.matrix);
+  } else {
+    camera.getWorldDirection(_d); _d.y = 0;
+    if (_d.lengthSq() < 1e-4) _d.set(0, 0, -1);
+    pos.copy(camPos).addScaledVector(_d.normalize(), XR_DIST); 
+  }
+  pos.y -= HEIGHT_OFFSET;
+
+  stage.position.copy(pos);
+  stage.scale.setScalar(THREE.MathUtils.clamp(camPos.distanceTo(pos) / 2.0, 0.5, 1.8));
+  layout();
+  faceViewer(true);
+  stage.visible = true; placed = true; reticle.visible = false;
+  setHint('');
+  topbar.style.display = 'flex';
+  if (!started) beginExperience();
+}
+
+const zee = new THREE.Vector3(0, 0, 1), euler = new THREE.Euler(), q0 = new THREE.Quaternion();
+const q1 = new THREE.Quaternion(-Math.sqrt(0.5), 0, 0, Math.sqrt(0.5));
+const devQ = new THREE.Quaternion();
+let gyroReady = false, gotGyro = false, dragMode = false, yaw = 0, pitch = 0;
+
+function onOrient(e) {
+  if (e.beta == null) return;
+  const r = THREE.MathUtils.degToRad;
+  const orient = r((screen.orientation && screen.orientation.angle) || window.orientation || 0);
+  euler.set(r(e.beta), r(e.alpha || 0), -r(e.gamma || 0), 'YXZ');
+  devQ.setFromEuler(euler).multiply(q1).multiply(q0.setFromAxisAngle(zee, -orient));
+  gotGyro = true;
+  if (!gyroReady) { gyroReady = true; camera.quaternion.copy(devQ); placeFallback(); beginExperience(); }
+}
+
+function placeFallback() {
+  camera.updateMatrixWorld(true);
+  camera.getWorldDirection(_d); _d.y = 0;
+  if (_d.lengthSq() < 1e-4) _d.set(0, 0, -1);
+  _d.normalize().multiplyScalar(FALLBACK_DIST);
+  
+  const camPos = new THREE.Vector3().setFromMatrixPosition(camera.matrixWorld);
+  stage.position.set(camPos.x + _d.x, camPos.y - HEIGHT_OFFSET, camPos.z + _d.z);
+
+  layout();
+  faceViewer(true);
+  stage.visible = true; placed = true;
+}
+
+async function startCamera() {
+  unlockMedia();
+  startEl.style.display = 'none';
+  setHint('Activando cámara y sensores…');
+  try {
+    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+      const r = await DeviceOrientationEvent.requestPermission();
+      if (r !== 'granted') throw new Error('sin permiso de sensores');
+    }
+    addEventListener('deviceorientation', onOrient, true);
+  } catch (e) {}
+  try {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('HTTPS requerido');
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } } });
+    camVideo.srcObject = stream; await camVideo.play();
+    document.body.classList.add('camon');
+  } catch (e) {
+    setHint('No se pudo activar la cámara; se muestra sin fondo.');
+  }
+  setTimeout(() => {
+    if (!gyroReady) {
+      dragMode = true; placeFallback(); beginExperience();
+      setHint('Arrastrá con el dedo o el mouse para mirar alrededor');
+      setTimeout(() => setHint(''), 4000);
+    }
+  }, 1800);
+}
+
+let dragging = false, lx = 0, ly = 0;
+addEventListener('pointerdown', e => { if (dragMode && !e.target.closest('button')) { dragging = true; lx = e.clientX; ly = e.clientY; } });
+addEventListener('pointerup', () => dragging = false);
+addEventListener('pointermove', e => {
+  if (!dragging) return;
+  yaw += (e.clientX - lx) * 0.005; pitch = THREE.MathUtils.clamp(pitch + (e.clientY - ly) * 0.005, -1.2, 1.2);
+  lx = e.clientX; ly = e.clientY;
+});
+
+/* Eventos asignados para toque táctil (touch) y clic para máxima compatibilidad */
+const btnCam = $('#btnCam');
+btnCam.addEventListener('click', startCamera);
+btnCam.addEventListener('touchend', (e) => { e.preventDefault(); startCamera(); });
+
+const btnXR = $('#btnXR');
+btnXR.addEventListener('click', startXR);
+btnXR.addEventListener('touchend', (e) => { e.preventDefault(); startXR(); });
+
+$('#btnExit').onclick = () => { if (xrSession) xrSession.end(); else location.reload(); };
+$('#btnReplace').onclick = () => {
+  if (xrMode) { placed = false; stage.visible = false; setHint('Apuntá al piso y tocá para ubicar a Mazairita de nuevo'); }
+  else { camera.quaternion.copy(dragMode ? camera.quaternion : devQ); placeFallback(); }
+};
+
+if (navigator.xr && navigator.xr.isSessionSupported) {
+  navigator.xr.isSessionSupported('immersive-ar').then(ok => {
+    if (ok) { $('#btnXR').style.display = 'block'; $('#btnCam').textContent = 'Usar modo cámara (compatible con iPhone)'; }
+  }).catch(() => {});
+}
+
+renderer.setAnimationLoop((time, frame) => {
+  const dt = Math.min(clock.getDelta(), 0.05);
+
+  if (frame && hitSource && !placed) {
+    const ref = renderer.xr.getReferenceSpace();
+    const hits = frame.getHitTestResults(hitSource);
+    if (hits.length) {
+      const pose = hits[0].getPose(ref);
+      reticle.visible = true; reticle.matrix.fromArray(pose.transform.matrix);
+    } else reticle.visible = false;
+  }
+
+  if (!xrMode) {
+    if (gotGyro && !dragMode) camera.quaternion.slerp(devQ, 0.6);
+    else if (dragMode) camera.rotation.set(pitch, yaw, 0, 'YXZ');
+  }
+
+  updateScene(dt);
+  if (mixer) mixer.update(dt);
+  if (stage.visible) faceViewer(false);
+  renderer.render(scene, camera);
+});
+</script>
+</body>
+</html>
