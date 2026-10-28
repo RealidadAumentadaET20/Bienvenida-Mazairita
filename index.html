@@ -1,644 +1,320 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="es">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <meta name="theme-color" content="#111111">
-  <title>Mazairita · Realidad Aumentada</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#111">
+<title>Mazairita · 3er Año - Realidad Aumentada</title>
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#000;color:#fff;font-family:system-ui,-apple-system,sans-serif}
 
-  <!-- Polyfill para ES Modules en navegadores antiguos (iOS Safari < 16.4) -->
-  <script async src="https://cdn.jsdelivr.net/npm/es-module-shims@1.10.0/dist/es-module-shims.min.js"></script>
+/* Fondo de cámara y canvas 3D */
+#camera,#three{position:fixed;inset:0;width:100%;height:100%}
+#camera{object-fit:cover}
+#three{pointer-events:none}
 
-  <script type="importmap">
-  {
-    "imports": {
-      "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
-      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
-    }
-  }
-  </script>
+/* Pantalla de inicio de interacción (requerida por políticas de autoplay en navegadores móviles) */
+#intro{position:fixed;inset:0;z-index:10;display:flex;align-items:center;justify-content:center;padding:24px;background:linear-gradient(150deg,#151515,#333);text-align:center}
+#panel{max-width:440px}
+h1{font-size:28px;margin:0 0 12px;color:#00e5ff}
+p{line-height:1.5;color:#eee;font-size:15px}
+button{border:0;border-radius:14px;padding:14px 24px;font-size:16px;font-weight:700;cursor:pointer;transition:transform 0.2s}
+button:active{transform:scale(0.95)}
+#start{background:#00e5ff;color:#111;margin-top:12px}
 
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; }
-    html, body { width: 100%; height: 100%; overflow: hidden; background: #000; color: #fff; font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+/* Banner de estado */
+#status{position:fixed;z-index:5;top:12px;left:12px;right:12px;padding:10px;text-align:center;border-radius:12px;background:rgba(0,0,0,0.7);font-size:14px;pointer-events:none;border:1px solid rgba(255,255,255,0.2)}
 
-    /* Capas de visualización */
-    #camera-feed { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: cover; z-index: 1; }
-    #three-canvas { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 2; pointer-events: auto; }
+/* Botones SÍ y NO */
+#choice{position:fixed;z-index:6;bottom:calc(24px + env(safe-area-inset-bottom));left:0;right:0;display:none;justify-content:center;gap:20px}
+.btn-action{min-width:110px;padding:14px 28px;font-size:18px;font-weight:bold;border-radius:50px;border:none;box-shadow:0 4px 15px rgba(0,0,0,0.5);cursor:pointer}
+#yes{background:#00e676;color:#003311}
+#no{background:#ff5252;color:#330000}
 
-    /* Interfaz de usuario Superpuesta (UI) */
-    .ui-layer { position: fixed; inset: 0; z-index: 10; pointer-events: none; display: flex; flex-direction: column; justify-content: space-between; padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }
-    .interactive { pointer-events: auto; }
-
-    /* Pantalla de Carga e Inicio */
-    #screen-intro { position: fixed; inset: 0; z-index: 20; background: linear-gradient(135deg, #0d0d1a, #1a1a3a); display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px; text-align: center; }
-    #screen-intro h1 { font-size: 2rem; margin-bottom: 8px; color: #00e5ff; text-shadow: 0 0 10px rgba(0,229,255,0.4); }
-    #screen-intro p { font-size: 1rem; color: #cccccc; max-width: 400px; margin-bottom: 24px; line-height: 1.4; }
-    
-    .btn { background: #00e5ff; color: #050515; border: none; padding: 16px 32px; border-radius: 50px; font-size: 1.1rem; font-weight: 700; cursor: pointer; box-shadow: 0 4px 20px rgba(0,229,255,0.4); transition: transform 0.2s, background 0.2s; min-height: 48px; min-width: 140px; display: inline-flex; align-items: center; justify-content: center; }
-    .btn:active { transform: scale(0.95); }
-    .btn:disabled { background: #555566; color: #888899; box-shadow: none; cursor: not-allowed; }
-
-    /* Barra de progreso de Carga */
-    #progress-container { width: 100%; max-width: 280px; height: 8px; background: rgba(255,255,255,0.1); border-radius: 4px; overflow: hidden; margin-bottom: 16px; display: block; }
-    #progress-bar { width: 0%; height: 100%; background: #00e5ff; transition: width 0.3s ease; }
-    #progress-text { font-size: 0.85rem; color: #8888aa; margin-bottom: 16px; }
-
-    /* Indicador de Estado Top */
-    #status-banner { background: rgba(0, 0, 0, 0.65); backdrop-filter: blur(8px); padding: 10px 18px; border-radius: 20px; font-size: 0.9rem; border: 1px solid rgba(255,255,255,0.15); align-self: center; text-align: center; max-width: 90%; }
-
-    /* Subtítulos */
-    #subtitles { background: rgba(0, 0, 0, 0.8); padding: 12px 20px; border-radius: 12px; font-size: 1rem; color: #fff; text-align: center; max-width: 90%; align-self: center; margin-bottom: 12px; min-height: 48px; display: flex; align-items: center; justify-content: center; border-left: 4px solid #00e5ff; }
-
-    /* Panel de Botones Interactivos SÍ / NO */
-    #choice-panel { display: none; gap: 16px; justify-content: center; width: 100%; margin-bottom: 12px; }
-    .btn-choice { min-width: 120px; padding: 14px 28px; font-size: 1.2rem; border-radius: 16px; border: none; font-weight: bold; cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,0.5); }
-    .btn-yes { background: #00e676; color: #003311; }
-    .btn-no { background: #ff5252; color: #330000; }
-
-    /* Botón de Control Manual / Reubicar */
-    #controls-panel { display: flex; justify-content: space-between; width: 100%; align-items: flex-end; }
-    .btn-secondary { background: rgba(255, 255, 255, 0.2); backdrop-filter: blur(4px); color: #fff; border: 1px solid rgba(255,255,255,0.3); padding: 10px 18px; border-radius: 12px; font-size: 0.85rem; }
-  </style>
+/* Elemento video HTML oculto para renderizado 3D */
+#ar-video{display:none}
+</style>
 </head>
 <body>
 
-  <!-- Video de Fondo para Cámara en Modo Giroscopio Fallback -->
-  <video id="camera-feed" playsinline autoplay muted></video>
+<!-- Video de fondo de la cámara del celular -->
+<video id="camera" playsinline autoplay muted></video>
 
-  <!-- Canvas Principal 3D -->
-  <canvas id="three-canvas"></canvas>
+<!-- Canvas de Three.js -->
+<canvas id="three"></canvas>
 
-  <!-- Pantalla de Inicio y Carga -->
-  <div id="screen-intro">
-    <h1>Mazairita AR</h1>
-    <p>Conocé la especialidad de Producción Multimedial en Realidad Aumentada.</p>
-    <div id="progress-container">
-      <div id="progress-bar"></div>
-    </div>
-    <div id="progress-text">Cargando experiencia (0%)...</div>
-    <button id="btn-start" class="btn interactive" disabled>Comenzar</button>
+<!-- Pantalla inicial de bienvenida e interacción -->
+<div id="intro">
+  <div id="panel">
+    <h1>Producción Multimedial · 3er Año</h1>
+    <p>Te damos la bienvenida a la experiencia de Realidad Aumentada con Mazairita.</p>
+    <button id="start">Iniciar experiencia</button>
   </div>
+</div>
 
-  <!-- Capa UI en la Experiencia -->
-  <div class="ui-layer">
-    <div id="status-banner">Iniciando sistema...</div>
+<div id="status">Iniciando experiencia...</div>
 
-    <div style="display: flex; flex-direction: column; align-items: center; width: 100%;">
-      <div id="subtitles" style="display: none;"></div>
+<!-- Botones de interacción superpuestos -->
+<div id="choice">
+  <button class="btn-action" id="yes">SÍ</button>
+  <button class="btn-action" id="no">NO</button>
+</div>
+
+<!-- Elemento <video> oculto que provee los fotogramas para el plano 3D -->
+<video id="ar-video" playsinline preload="auto" crossorigin="anonymous"></video>
+
+<!-- Importmap para Three.js -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+/* =========================================================================
+   CONFIGURACIÓN Y RUTAS DE ASSETS
+   ========================================================================= */
+const ASSETS = {
+  video: './assets/3ER AÑO.mp4',
+  modelSaludo: './assets/MAZAIRITA-VERSION-FINAL-APARICIÓN Y SALUDO.glb',
+  modelGiro2: './assets/MAZAIRITA-VERSION-FINAL-GIRO2.glb',
+  docLink: 'https://docs.google.com/document/d/1g2UB1Tdas4mCC6SRX_setnILhVluAiEfka7CHQfyujU/edit?usp=sharing'
+};
+
+const cam = document.querySelector('#camera');
+const intro = document.querySelector('#intro');
+const startBtn = document.querySelector('#start');
+const status = document.querySelector('#status');
+const choice = document.querySelector('#choice');
+const btnYes = document.querySelector('#yes');
+const btnNo = document.querySelector('#no');
+const videoElem = document.querySelector('#ar-video');
+
+/* =========================================================================
+   CONFIGURACIÓN DE ESCENA 3D (THREE.JS)
+   ========================================================================= */
+const renderer = new THREE.WebGLRenderer({
+  canvas: document.querySelector('#three'),
+  alpha: true,
+  antialias: true
+});
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+
+const scene = new THREE.Scene();
+const cam3d = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.01, 20);
+cam3d.position.set(0, 0, 0);
+
+// Luces
+scene.add(new THREE.HemisphereLight(0xffffff, 0x555555, 2.5));
+const dirLight = new THREE.DirectionalLight(0xffffff, 2);
+dirLight.position.set(2, 4, 3);
+scene.add(dirLight);
+
+// Grupo general ubicado a 1 metro de distancia del teléfono
+const mainGroup = new THREE.Group();
+mainGroup.position.set(0, -0.2, -1.0); // Colocado a 1 metro hacia adelante
+scene.add(mainGroup);
+
+// Subgrupos para el Modelo 3D y el Plano de Video
+const robotGroup = new THREE.Group();
+robotGroup.position.set(-0.35, 0, 0); // Lado izquierdo
+mainGroup.add(robotGroup);
+
+const videoGroup = new THREE.Group();
+videoGroup.position.set(0.35, 0, 0); // Lado derecho
+mainGroup.add(videoGroup);
+
+let videoTexture, videoMesh;
+let activeMixer = null;
+let modelSaludoScene = null;
+let modelGiro2Scene = null;
+let mixerSaludo = null;
+let mixerGiro2 = null;
+
+const clock = new THREE.Clock();
+const loader = new GLTFLoader();
+
+/* =========================================================================
+   CARGA DE RECURSOS (VIDEOS Y MODELOS GLB)
+   ========================================================================= */
+function setupVideoMesh() {
+  videoElem.src = ASSETS.video;
+  videoTexture = new THREE.VideoTexture(videoElem);
+  videoTexture.colorSpace = THREE.SRGBColorSpace;
+
+  // Plano 3D para proyectar el video MP4
+  const geometry = new THREE.PlaneGeometry(0.5, 0.88); // Proporción aproximada vertical
+  const material = new THREE.MeshBasicMaterial({ map: videoTexture, side: THREE.DoubleSide, transparent: true });
+  videoMesh = new THREE.Mesh(geometry, material);
+  videoGroup.add(videoMesh);
+}
+
+function loadModels() {
+  // Carga Modelo 1: Aparición y Saludo
+  loader.load(ASSETS.modelSaludo, (gltf) => {
+    modelSaludoScene = gltf.scene;
+    modelSaludoScene.scale.set(0.4, 0.4, 0.4);
+    robotGroup.add(modelSaludoScene);
+
+    if (gltf.animations && gltf.animations.length) {
+      mixerSaludo = new THREE.AnimationMixer(modelSaludoScene);
+      const action = mixerSaludo.clipAction(gltf.animations[0]);
+      action.setLoop(THREE.LoopOnce);
+      action.clampWhenFinished = true;
       
-      <div id="choice-panel" class="interactive">
-        <button id="btn-yes" class="btn-choice btn-yes">¡SÍ!</button>
-        <button id="btn-no" class="btn-choice btn-no">NO</button>
-      </div>
-
-      <div id="controls-panel">
-        <button id="btn-relocate" class="btn-secondary interactive" style="display:none;">Reubicar escena</button>
-        <button id="btn-restart" class="btn-secondary interactive" style="display:none;">Volver a empezar</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Elemento de Video HTML Oculto para Textura 3D -->
-  <video id="ar-video" playsinline preload="auto" crossorigin="anonymous" style="display:none;"></video>
-
-  <script type="module">
-    import * as THREE from 'three';
-    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-
-    /* =========================================================================
-       1. CONFIGURACIÓN GENERAL DEL PROYECTO Y ASSETS
-       ========================================================================= */
-    const CONFIG = {
-      // Configuración de audio primario: true si el MP3 manda el ritmo, false si el MP4 incluye la voz
-      useMp3AsMasterAudio: true,
-      
-      // Distancia inicial de colocación en metros en Modo B (Fallback Girosopico)
-      defaultPlacementDistance: 1.8,
-
-      // Mapeo de assets multimedia locales
-      assets: {
-        model: './assets/mazairita.glb',
-        bienvenida: {
-          mp3: './assets/voz_bienvenida.mp3',
-          mp4: './assets/video_bienvenida.mp4',
-          sub: '¡Hola! Soy Mazairita. Bienvenid@ a la especialidad de Producción Multimedial. ¿Querés saber qué hacemos?'
-        },
-        explicacion: {
-          mp3: './assets/voz_explicacion.mp3',
-          mp4: './assets/video_explicacion.mp4',
-          sub: '¡Buenísimo! Acá aprendemos diseño gráfico, edición de video, animación 3D, programación web y proyectos en RA.'
-        },
-        despedida: {
-          mp3: './assets/voz_despedida.mp3',
-          mp4: './assets/video_despedida.mp4',
-          sub: 'No hay problema. Podés recorrer la muestra y consultarnos lo que quieras. ¡Que disfrutes la exposición!',
-          foleys: [
-            { time: 0.5, src: './assets/foley_step.mp3' },
-            { time: 1.8, src: './assets/foley_bye.mp3' }
-          ]
-        }
-      },
-
-      // Mapeo de los nombres de los clips de animación definidos dentro del GLB
-      animations: {
-        aparicion: 'aparicion',
-        idle: 'idle',
-        hablar: 'hablar',
-        explicar: 'explicar',
-        despedida: 'despedida'
-      }
-    };
-
-    /* =========================================================================
-       2. ESTADO GLOBAL DE LA APLICACIÓN
-       ========================================================================= */
-    const state = {
-      mode: 'NONE', // 'WEBXR' o 'GYRO_FALLBACK'
-      loadedAssets: 0,
-      totalAssets: 0,
-      currentPhase: 'INIT', // 'INIT', 'BIENVENIDA', 'WAIT_CHOICE', 'EXPLICACION', 'DESPEDIDA', 'END'
-      robotMixer: null,
-      robotActions: {},
-      loadedClips: [],
-      audioMaster: new Audio(),
-      foleyAudios: [],
-      xrHitTestSource: null,
-      xrRefSpace: null,
-      isPlaced: false,
-      gyroOrientation: { alpha: 0, beta: 0, gamma: 0 }
-    };
-
-    /* =========================================================================
-       3. ELEMENTOS DOM
-       ========================================================================= */
-    const DOM = {
-      screenIntro: document.getElementById('screen-intro'),
-      btnStart: document.getElementById('btn-start'),
-      progressBar: document.getElementById('progress-bar'),
-      progressText: document.getElementById('progress-text'),
-      statusBanner: document.getElementById('status-banner'),
-      subtitles: document.getElementById('subtitles'),
-      choicePanel: document.getElementById('choice-panel'),
-      btnYes: document.getElementById('btn-yes'),
-      btnNo: document.getElementById('btn-no'),
-      btnRelocate: document.getElementById('btn-relocate'),
-      btnRestart: document.getElementById('btn-restart'),
-      cameraFeed: document.getElementById('camera-feed'),
-      threeCanvas: document.getElementById('three-canvas'),
-      arVideo: document.getElementById('ar-video')
-    };
-
-    /* =========================================================================
-       4. ESCENA 3D (THREE.JS)
-       ========================================================================= */
-    let renderer, scene, camera;
-    let mainGroup, robotGroup, videoMesh;
-    let videoTexture;
-    const clock = new THREE.Clock();
-
-    function initThree() {
-      renderer = new THREE.WebGLRenderer({
-        canvas: DOM.threeCanvas,
-        alpha: true,
-        antialias: true,
-        powerPreference: 'high-performance'
-      });
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-      renderer.setSize(window.innerWidth, window.innerHeight);
-      renderer.outputColorSpace = THREE.SRGBColorSpace;
-      renderer.xr.enabled = true;
-
-      scene = new THREE.Scene();
-      camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.01, 20);
-
-      // Iluminación balanceada
-      const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 2.5);
-      hemiLight.position.set(0, 20, 0);
-      scene.add(hemiLight);
-
-      const dirLight = new THREE.DirectionalLight(0xffffff, 2.0);
-      dirLight.position.set(2, 5, 3);
-      scene.add(dirLight);
-
-      // Grupo Contenedor Principal
-      mainGroup = new THREE.Group();
-      scene.add(mainGroup);
-
-      // Sub-grupo para el Robot
-      robotGroup = new THREE.Group();
-      robotGroup.position.set(-0.5, -1.6, -CONFIG.defaultPlacementDistance); // Medio metro a la izquierda, 1.6m abajo
-      mainGroup.add(robotGroup);
-
-      // Creación del Plano 3D para la textura de Video MP4
-      const videoGeo = new THREE.PlaneGeometry(0.9, 1.6); // Proporción vertical 9:16 por defecto
-      videoTexture = new THREE.VideoTexture(DOM.arVideo);
-      videoTexture.colorSpace = THREE.SRGBColorSpace;
-
-      const videoMat = new THREE.MeshBasicMaterial({
-        map: videoTexture,
-        side: THREE.DoubleSide,
-        transparent: true
-      });
-
-      videoMesh = new THREE.Mesh(videoGeo, videoMat);
-      videoMesh.position.set(0.5, -1.6, -CONFIG.defaultPlacementDistance); // Medio metro a la derecha, 1.6m abajo
-      mainGroup.add(videoMesh);
-
-      window.addEventListener('resize', onWindowResize);
-    }
-
-    function onWindowResize() {
-      camera.aspect = window.innerWidth / window.innerHeight;
-      camera.updateProjectionMatrix();
-      renderer.setSize(window.innerWidth, window.innerHeight);
-    }
-
-    /* =========================================================================
-       5. SISTEMA DE PRECARGA DE ASSETS
-       ========================================================================= */
-    function updateProgress(msg) {
-      const pct = Math.round((state.loadedAssets / state.totalAssets) * 100) || 0;
-      DOM.progressBar.style.width = `${pct}%`;
-      DOM.progressText.textContent = `${msg} (${pct}%)`;
-    }
-
-    async function preloadAllAssets() {
-      const assetUrls = [
-        CONFIG.assets.model,
-        CONFIG.assets.bienvenida.mp3, CONFIG.assets.bienvenida.mp4,
-        CONFIG.assets.explicacion.mp3, CONFIG.assets.explicacion.mp4,
-        CONFIG.assets.despedida.mp3, CONFIG.assets.despedida.mp4
-      ];
-
-      if (CONFIG.assets.despedida.foleys) {
-        CONFIG.assets.despedida.foleys.forEach(f => assetUrls.push(f.src));
-      }
-
-      state.totalAssets = assetUrls.length;
-      updateProgress('Iniciando descarga de recursos...');
-
-      const gltfLoader = new GLTFLoader();
-
-      // Carga de Modelo GLB
-      const loadModel = new Promise((resolve) => {
-        gltfLoader.load(CONFIG.assets.model, (gltf) => {
-          const robotModel = gltf.scene;
-          robotModel.scale.set(0.8, 0.8, 0.8);
-          robotGroup.add(robotModel);
-
-          // Configuración de animaciones GLB
-          if (gltf.animations && gltf.animations.length > 0) {
-            state.robotMixer = new THREE.AnimationMixer(robotModel);
-            state.loadedClips = gltf.animations;
-
-            gltf.animations.forEach(clip => {
-              const action = state.robotMixer.clipAction(clip);
-              state.robotActions[clip.name] = action;
-            });
-
-            // Verificar clips esperados
-            Object.values(CONFIG.animations).forEach(animName => {
-              if (!state.robotActions[animName]) {
-                console.warn(`[GLB] Advertencia: No se encontró la animación "${animName}" en el modelo.`);
-              }
-            });
-          }
-          state.loadedAssets++;
-          updateProgress('Modelo 3D cargado correctamente');
-          resolve();
-        }, undefined, (err) => {
-          console.error('[GLB] Error al cargar el modelo 3D:', err);
-          state.loadedAssets++;
-          updateProgress('Fallo en el modelo 3D (continuando)...');
-          resolve();
-        });
-      });
-
-      // Precarga de archivos de Medios (Audio/Video fetch a Blob)
-      const loadMedia = assetUrls.filter(u => u !== CONFIG.assets.model).map(url => {
-        return fetch(url)
-          .then(res => res.blob())
-          .then(() => {
-            state.loadedAssets++;
-            updateProgress(`Cargado: ${url.split('/').pop()}`);
-          })
-          .catch(err => {
-            console.warn(`[Assets] Error al precargar media: ${url}`, err);
-            state.loadedAssets++;
-            updateProgress(`Error en archivo: ${url.split('/').pop()}`);
-          });
-      });
-
-      await Promise.all([loadModel, ...loadMedia]);
-
-      DOM.btnStart.disabled = false;
-      DOM.progressText.textContent = '¡Todo listo para comenzar!';
-    }
-
-    /* =========================================================================
-       6. INICIALIZACIÓN DE CÁMARA Y DISPOSITIVO (MODOS A Y B)
-       ========================================================================= */
-    async function initExperience() {
-      DOM.screenIntro.style.display = 'none';
-
-      // Verificar compatibilidad con WebXR (Modo A)
-      if (navigator.xr) {
-        const supported = await navigator.xr.isSessionSupported('immersive-ar').catch(() => false);
-        if (supported) {
-          startWebXRSession();
-          return;
-        }
-      }
-
-      // Fallback a Modo B: Cámara HTML + Giroscopio
-      startGyroFallback();
-    }
-
-    // Modo A: WebXR Immersive AR
-    async function startWebXRSession() {
-      state.mode = 'WEBXR';
-      DOM.statusBanner.textContent = 'Modo WebXR: Tocá la pantalla para colocar la escena';
-
-      try {
-        const session = await navigator.xr.requestSession('immersive-ar', {
-          requiredFeatures: ['hit-test', 'local-floor']
-        });
-        renderer.xr.setReferenceSpaceType('local-floor');
-        await renderer.xr.setSession(session);
-
-        const viewerSpace = await session.requestReferenceSpace('viewer');
-        state.xrHitTestSource = await session.requestHitTestSource({ space: viewerSpace });
-        state.xrRefSpace = await renderer.xr.getReferenceSpace();
-
-        session.addEventListener('select', onXRSelect);
-        session.addEventListener('end', () => { state.mode = 'NONE'; });
-      } catch (e) {
-        console.warn('WebXR falló al iniciar, usando Modo Giroscopio:', e);
-        startGyroFallback();
-      }
-    }
-
-    function onXRSelect() {
-      if (!state.isPlaced && mainGroup) {
-        state.isPlaced = true;
-        DOM.statusBanner.textContent = 'Escena fijada en el espacio';
-        startPhaseBienvenida();
-      }
-    }
-
-    // Modo B: Giroscopio y Cámara Trasera
-    async function startGyroFallback() {
-      state.mode = 'GYRO_FALLBACK';
-      DOM.statusBanner.textContent = 'Modo Cámara + Giroscopio activo';
-      DOM.btnRelocate.style.display = 'block';
-
-      // 1. Permiso y Activación de Cámara Trasera
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
-          audio: false
-        });
-        DOM.cameraFeed.srcObject = stream;
-      } catch (err) {
-        console.error('Error al acceder a la cámara:', err);
-        DOM.statusBanner.textContent = 'Error: No se otorgó acceso a la cámara';
-      }
-
-      // 2. Solicitar permiso de Giroscopio en iOS Safari 13+
-      if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-        try {
-          const permission = await DeviceOrientationEvent.requestPermission();
-          if (permission === 'granted') {
-            window.addEventListener('deviceorientation', onDeviceOrientation);
-          }
-        } catch (e) {
-          console.warn('Permiso de giroscopio denegado o no disponible:', e);
-        }
-      } else {
-        window.addEventListener('deviceorientation', onDeviceOrientation);
-      }
-
-      // Ubicación inicial frente al usuario
-      repositionSceneGyro();
-      startPhaseBienvenida();
-    }
-
-    function onDeviceOrientation(e) {
-      state.gyroOrientation.alpha = e.alpha || 0;
-      state.gyroOrientation.beta = e.beta || 0;
-      state.gyroOrientation.gamma = e.gamma || 0;
-
-      if (state.mode === 'GYRO_FALLBACK') {
-        // Control suave de rotación de la cámara 3D acorde al giroscopio
-        const alphaRad = THREE.MathUtils.degToRad(state.gyroOrientation.alpha);
-        const betaRad = THREE.MathUtils.degToRad(state.gyroOrientation.beta);
-        camera.rotation.set(betaRad * 0.1, alphaRad * 0.1, 0, 'YXZ');
-      }
-    }
-
-    function repositionSceneGyro() {
-      mainGroup.position.set(0, 0, 0);
-      mainGroup.rotation.set(0, 0, 0);
-    }
-
-    /* =========================================================================
-       7. MÁQUINA DE ESTADOS Y SINCRONIZACIÓN DE ANIMACIÓN / VOZ
-       ========================================================================= */
-
-    function playAnimation(animName, loop = false) {
-      if (!state.robotMixer) return;
-      const action = state.robotActions[animName];
-      if (action) {
-        state.robotMixer.stopAllAction();
-        action.reset();
-        action.setLoop(loop ? THREE.LoopRepeat : THREE.LoopOnce, loop ? Infinity : 1);
-        action.clampWhenFinished = !loop;
-        action.play();
-      }
-    }
-
-    function playAudioAndVideo(mp3Url, mp4Url, subtitleText, onEndedCallback) {
-      // 1. Mostrar Subtítulo
-      DOM.subtitles.textContent = subtitleText;
-      DOM.subtitles.style.display = 'flex';
-
-      // 2. Configurar y Reproducir Video MP4 en la Textura 3D
-      DOM.arVideo.src = mp4Url;
-      DOM.arVideo.currentTime = 0;
-      DOM.arVideo.muted = CONFIG.useMp3AsMasterAudio; // Evitar eco si el máster es el MP3
-      DOM.arVideo.play().catch(e => console.warn('Error autoplay video:', e));
-
-      // 3. Configurar y Reproducir Audio MP3 Máster
-      state.audioMaster.src = mp3Url;
-      state.audioMaster.currentTime = 0;
-      state.audioMaster.play().catch(e => console.warn('Error autoplay audio:', e));
-
-      // 4. Callback al finalizar
-      state.audioMaster.onended = () => {
-        DOM.subtitles.style.display = 'none';
-        if (onEndedCallback) onEndedCallback();
-      };
-    }
-
-    // FASE 3: Bienvenida
-    function startPhaseBienvenida() {
-      state.currentPhase = 'BIENVENIDA';
-      playAnimation(CONFIG.animations.hablar, true);
-
-      playAudioAndVideo(
-        CONFIG.assets.bienvenida.mp3,
-        CONFIG.assets.bienvenida.mp4,
-        CONFIG.assets.bienvenida.sub,
-        () => {
-          startPhaseWaitChoice();
-        }
-      );
-    }
-
-    // FASE 4: Espera de Interacción
-    function startPhaseWaitChoice() {
-      state.currentPhase = 'WAIT_CHOICE';
-      playAnimation(CONFIG.animations.idle, true);
-      DOM.choicePanel.style.display = 'flex';
-      DOM.statusBanner.textContent = 'Seleccioná una opción para continuar';
-    }
-
-    // FASE 5: Respuesta SÍ
-    function onChoiceYes() {
-      DOM.choicePanel.style.display = 'none';
-      state.currentPhase = 'EXPLICACION';
-      playAnimation(CONFIG.animations.explicar, false);
-
-      playAudioAndVideo(
-        CONFIG.assets.explicacion.mp3,
-        CONFIG.assets.explicacion.mp4,
-        CONFIG.assets.explicacion.sub,
-        () => {
-          showEndState();
-        }
-      );
-    }
-
-    // FASE 6: Respuesta NO
-    function onChoiceNo() {
-      DOM.choicePanel.style.display = 'none';
-      state.currentPhase = 'DESPEDIDA';
-      playAnimation(CONFIG.animations.despedida, false);
-
-      // Disparar Foleys (Efectos de sonido) si están configurados
-      if (CONFIG.assets.despedida.foleys) {
-        CONFIG.assets.despedida.foleys.forEach(foley => {
-          setTimeout(() => {
-            const audioFoley = new Audio(foley.src);
-            audioFoley.play().catch(() => {});
-          }, foley.time * 1000);
-        });
-      }
-
-      playAudioAndVideo(
-        CONFIG.assets.despedida.mp3,
-        CONFIG.assets.despedida.mp4,
-        CONFIG.assets.despedida.sub,
-        () => {
-          showEndState();
-        }
-      );
-    }
-
-    function showEndState() {
-      state.currentPhase = 'END';
-      playAnimation(CONFIG.animations.idle, true);
-      DOM.btnRestart.style.display = 'block';
-      DOM.statusBanner.textContent = 'Experiencia finalizada.';
-    }
-
-    // FASE 7: Reiniciar Experiencia
-    function resetExperience() {
-      state.audioMaster.pause();
-      DOM.arVideo.pause();
-
-      DOM.btnRestart.style.display = 'none';
-      DOM.choicePanel.style.display = 'none';
-      DOM.subtitles.style.display = 'none';
-
-      startPhaseBienvenida();
-    }
-
-    /* =========================================================================
-       8. BUCLE DE RENDERIZADO Y SINCRONIZACIÓN DE AUDIO (~80ms)
-       ========================================================================= */
-    function render(timestamp, frame) {
-      const delta = clock.getDelta();
-
-      // Sincronización del Audio Máster con el AnimationMixer del Robot
-      if (state.robotMixer && !state.audioMaster.paused && state.audioMaster.duration > 0) {
-        const audioTime = state.audioMaster.currentTime;
-        const mixerTime = state.robotMixer.time;
-
-        // Corrección de desfase si supera los 80 ms (0.08 s)
-        if (Math.abs(audioTime - mixerTime) > 0.08) {
-          state.robotMixer.setTime(audioTime);
-        } else {
-          state.robotMixer.update(delta);
-        }
-      } else if (state.robotMixer) {
-        state.robotMixer.update(delta);
-      }
-
-      // Procesamiento Hit-Test de WebXR (Modo A)
-      if (state.mode === 'WEBXR' && frame && state.xrHitTestSource && !state.isPlaced) {
-        const hitTestResults = frame.getHitTestResults(state.xrHitTestSource);
-        if (hitTestResults.length > 0) {
-          const hit = hitTestResults[0];
-          const pose = hit.getPose(state.xrRefSpace);
-          mainGroup.position.copy(pose.transform.position);
-          mainGroup.quaternion.copy(pose.transform.orientation);
-        }
-      }
-
-      // Efecto Billboard sobre el eje Y para que Robot y Video miren siempre al usuario
-      if (mainGroup && camera) {
-        const camPos = new THREE.Vector3();
-        camera.getWorldPosition(camPos);
-        camPos.y = mainGroup.position.y; // Evitar inclinaciones verticales
-        mainGroup.lookAt(camPos);
-      }
-
-      renderer.render(scene, camera);
-    }
-
-    /* =========================================================================
-       9. EVENTOS E INICIALIZACIÓN
-       ========================================================================= */
-    function bindEvents() {
-      DOM.btnStart.addEventListener('click', initExperience);
-      DOM.btnYes.addEventListener('click', onChoiceYes);
-      DOM.btnNo.addEventListener('click', onChoiceNo);
-      DOM.btnRelocate.addEventListener('click', repositionSceneGyro);
-      DOM.btnRestart.addEventListener('click', resetExperience);
-
-      // Gestión de Visibilidad para Pausar Medios (Batería y Rendimiento)
-      document.addEventListener('visibilitychange', () => {
-        if (document.hidden) {
-          state.audioMaster.pause();
-          DOM.arVideo.pause();
-          if (DOM.cameraFeed.srcObject) {
-            DOM.cameraFeed.srcObject.getTracks().forEach(t => t.stop());
-          }
-        } else if (state.mode === 'GYRO_FALLBACK') {
-          startGyroFallback();
-        }
+      // Evento: Al terminar la animación de Saludo, pasar a la animación en bucle o segunda fase
+      mixerSaludo.addEventListener('finished', () => {
+        // Al terminar el saludo inicial, se mantiene la animación sin quitar los botones ni el video
+        action.reset().play();
       });
     }
+  }, undefined, (err) => console.error('Error cargando modelo Saludo:', err));
 
-    // Punto de Entrada Principal
-    window.addEventListener('DOMContentLoaded', () => {
-      initThree();
-      bindEvents();
-      preloadAllAssets();
-      renderer.setAnimationLoop(render);
+  // Carga Modelo 2: Giro 2
+  loader.load(ASSETS.modelGiro2, (gltf) => {
+    modelGiro2Scene = gltf.scene;
+    modelGiro2Scene.scale.set(0.4, 0.4, 0.4);
+    modelGiro2Scene.visible = false; // Oculto inicialmente
+    robotGroup.add(modelGiro2Scene);
+
+    if (gltf.animations && gltf.animations.length) {
+      mixerGiro2 = new THREE.AnimationMixer(modelGiro2Scene);
+      const action = mixerGiro2.clipAction(gltf.animations[0]);
+      action.setLoop(THREE.LoopOnce);
+      action.clampWhenFinished = true;
+    }
+  }, undefined, (err) => console.error('Error cargando modelo Giro2:', err));
+}
+
+/* =========================================================================
+   ACTIVACIÓN DE CÁMARA E INICIO DE EXPERIENCIA
+   ========================================================================= */
+async function startCamera() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }
     });
-  </script>
+    cam.srcObject = stream;
+    await cam.play();
+  } catch (err) {
+    console.error('Error activando la cámara:', err);
+    status.textContent = 'No se pudo activar la cámara.';
+  }
+}
+
+// Escuchar orientación del celular (giroscopio para mantener fija la escena a 1 metro)
+function enableGyroscope() {
+  if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+    DeviceOrientationEvent.requestPermission().then(permission => {
+      if (permission === 'granted') {
+        window.addEventListener('deviceorientation', onOrientationChange);
+      }
+    }).catch(() => {});
+  } else {
+    window.addEventListener('deviceorientation', onOrientationChange);
+  }
+}
+
+function onOrientationChange(e) {
+  const alphaRad = THREE.MathUtils.degToRad(e.alpha || 0);
+  const betaRad = THREE.MathUtils.degToRad(e.beta || 0);
+  cam3d.rotation.set(betaRad * 0.05, alphaRad * 0.05, 0, 'YXZ');
+}
+
+startBtn.addEventListener('click', async () => {
+  intro.style.display = 'none';
+  status.textContent = 'Cargando experiencia de 3er Año...';
+
+  await startCamera();
+  enableGyroscope();
+
+  // Iniciar reproducción del video MP4 (se queda en el último frame al terminar)
+  videoElem.play().catch(e => console.warn('Error al reproducir el video:', e));
+
+  // Mostrar botones SÍ / NO y activar animaciones
+  choice.style.display = 'flex';
+  status.textContent = '3er Año · Producción Multimedial';
+
+  if (mixerSaludo) {
+    activeMixer = mixerSaludo;
+    const action = mixerSaludo.clipAction(mixerSaludo._actions[0]._clip);
+    action.reset().play();
+  }
+});
+
+/* =========================================================================
+   INTERACCIÓN CON BOTONES SÍ / NO
+   ========================================================================= */
+
+// Al presionar "SÍ"
+btnYes.addEventListener('click', () => {
+  switchAnimationToGiro2();
+  
+  // Enviar al documento de Google Drive indicado
+  setTimeout(() => {
+    window.location.href = ASSETS.docLink;
+  }, 1200);
+});
+
+// Al presionar "NO"
+btnNo.addEventListener('click', () => {
+  switchAnimationToGiro2();
+
+  // Desaparece el video MP4 y la experiencia finaliza
+  videoGroup.visible = false;
+  choice.style.display = 'none';
+  status.textContent = '¡Gracias por visitar la muestra!';
+});
+
+function switchAnimationToGiro2() {
+  if (modelSaludoScene) modelSaludoScene.visible = false;
+  if (modelGiro2Scene) {
+    modelGiro2Scene.visible = true;
+    if (mixerGiro2) {
+      activeMixer = mixerGiro2;
+      const action = mixerGiro2.clipAction(mixerGiro2._actions[0]._clip);
+      action.reset().play();
+    }
+  }
+}
+
+/* =========================================================================
+   BUCLE DE RENDERIZADO
+   ========================================================================= */
+function animate() {
+  requestAnimationFrame(animate);
+  const delta = clock.getDelta();
+
+  if (activeMixer) activeMixer.update(delta);
+
+  // Mantener los elementos siempre orientados al usuario (Billboard)
+  mainGroup.lookAt(cam3d.position);
+
+  renderer.render(scene, cam3d);
+}
+
+function onResize() {
+  renderer.setSize(innerWidth, innerHeight);
+  cam3d.aspect = innerWidth / innerHeight;
+  cam3d.updateProjectionMatrix();
+}
+window.addEventListener('resize', onResize);
+
+// Inicialización
+setupVideoMesh();
+loadModels();
+animate();
+
+</script>
 </body>
 </html>
