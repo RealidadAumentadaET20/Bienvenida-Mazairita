@@ -1,277 +1,644 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="es">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
-<meta name="theme-color" content="#111">
-<title>Mazairita · Realidad aumentada</title>
-<style>
-*{box-sizing:border-box}
-html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#000;color:#fff;font-family:system-ui,sans-serif}
-#camera,#three{position:fixed;inset:0;width:100%;height:100%}
-#camera{object-fit:cover}
-#three{pointer-events:none}
-#scan{display:none}
-#intro{position:fixed;inset:0;z-index:10;display:flex;align-items:center;justify-content:center;padding:24px;background:linear-gradient(150deg,#151515,#333);text-align:center}
-#panel{max-width:440px}
-h1{font-size:30px;margin:0 0 12px}
-p{line-height:1.5;color:#eee}
-button{border:0;border-radius:14px;padding:14px 20px;font-size:16px;font-weight:700;cursor:pointer}
-#start{background:#fff;color:#111}
-#status{position:fixed;z-index:5;top:12px;left:12px;right:12px;padding:10px;text-align:center;border-radius:12px;background:#0009;font-size:14px;pointer-events:none}
-#choice{position:fixed;z-index:6;bottom:calc(20px + env(safe-area-inset-bottom));left:0;right:0;display:none;justify-content:center;gap:14px}
-.choice{width:min(38vw,180px);padding:0;background:transparent}
-.choice img{width:100%;height:auto;filter:drop-shadow(0 4px 12px #0008)}
-#media{position:fixed;inset:0;z-index:8;display:none;align-items:center;justify-content:center;background:#000c;padding:16px}
-#box{width:min(95vw,720px);position:relative}
-#response{width:100%;max-height:80vh;background:#000}
-#close{position:absolute;right:6px;top:6px;z-index:2;border-radius:50%;padding:8px 12px;background:rgba(255,255,255,0.2);color:#fff;border:1px solid rgba(255,255,255,0.3);font-size:18px;line-height:1}
-</style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#111111">
+  <title>Mazairita · Realidad Aumentada</title>
+
+  <!-- Polyfill para ES Modules en navegadores antiguos (iOS Safari < 16.4) -->
+  <script async src="https://cdn.jsdelivr.net/npm/es-module-shims@1.10.0/dist/es-module-shims.min.js"></script>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+    }
+  }
+  </script>
+
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #000; color: #fff; font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+
+    /* Capas de visualización */
+    #camera-feed { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: cover; z-index: 1; }
+    #three-canvas { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 2; pointer-events: auto; }
+
+    /* Interfaz de usuario Superpuesta (UI) */
+    .ui-layer { position: fixed; inset: 0; z-index: 10; pointer-events: none; display: flex; flex-direction: column; justify-content: space-between; padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }
+    .interactive { pointer-events: auto; }
+
+    /* Pantalla de Carga e Inicio */
+    #screen-intro { position: fixed; inset: 0; z-index: 20; background: linear-gradient(135deg, #0d0d1a, #1a1a3a); display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px; text-align: center; }
+    #screen-intro h1 { font-size: 2rem; margin-bottom: 8px; color: #00e5ff; text-shadow: 0 0 10px rgba(0,229,255,0.4); }
+    #screen-intro p { font-size: 1rem; color: #cccccc; max-width: 400px; margin-bottom: 24px; line-height: 1.4; }
+    
+    .btn { background: #00e5ff; color: #050515; border: none; padding: 16px 32px; border-radius: 50px; font-size: 1.1rem; font-weight: 700; cursor: pointer; box-shadow: 0 4px 20px rgba(0,229,255,0.4); transition: transform 0.2s, background 0.2s; min-height: 48px; min-width: 140px; display: inline-flex; align-items: center; justify-content: center; }
+    .btn:active { transform: scale(0.95); }
+    .btn:disabled { background: #555566; color: #888899; box-shadow: none; cursor: not-allowed; }
+
+    /* Barra de progreso de Carga */
+    #progress-container { width: 100%; max-width: 280px; height: 8px; background: rgba(255,255,255,0.1); border-radius: 4px; overflow: hidden; margin-bottom: 16px; display: block; }
+    #progress-bar { width: 0%; height: 100%; background: #00e5ff; transition: width 0.3s ease; }
+    #progress-text { font-size: 0.85rem; color: #8888aa; margin-bottom: 16px; }
+
+    /* Indicador de Estado Top */
+    #status-banner { background: rgba(0, 0, 0, 0.65); backdrop-filter: blur(8px); padding: 10px 18px; border-radius: 20px; font-size: 0.9rem; border: 1px solid rgba(255,255,255,0.15); align-self: center; text-align: center; max-width: 90%; }
+
+    /* Subtítulos */
+    #subtitles { background: rgba(0, 0, 0, 0.8); padding: 12px 20px; border-radius: 12px; font-size: 1rem; color: #fff; text-align: center; max-width: 90%; align-self: center; margin-bottom: 12px; min-height: 48px; display: flex; align-items: center; justify-content: center; border-left: 4px solid #00e5ff; }
+
+    /* Panel de Botones Interactivos SÍ / NO */
+    #choice-panel { display: none; gap: 16px; justify-content: center; width: 100%; margin-bottom: 12px; }
+    .btn-choice { min-width: 120px; padding: 14px 28px; font-size: 1.2rem; border-radius: 16px; border: none; font-weight: bold; cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,0.5); }
+    .btn-yes { background: #00e676; color: #003311; }
+    .btn-no { background: #ff5252; color: #330000; }
+
+    /* Botón de Control Manual / Reubicar */
+    #controls-panel { display: flex; justify-content: space-between; width: 100%; align-items: flex-end; }
+    .btn-secondary { background: rgba(255, 255, 255, 0.2); backdrop-filter: blur(4px); color: #fff; border: 1px solid rgba(255,255,255,0.3); padding: 10px 18px; border-radius: 12px; font-size: 0.85rem; }
+  </style>
 </head>
 <body>
-<video id="camera" playsinline muted></video>
-<canvas id="scan"></canvas>
-<canvas id="three"></canvas>
-<div id="intro">
-<div id="panel">
-<h1>Mazairita en realidad aumentada</h1>
-<p>Activá la cámara y apuntá al código QR. Cuando el teléfono lo detecte, aparecerá Mazairita y se habilitarán las opciones.</p>
-<button id="start">Activar cámara</button>
-<p style="font-size:12px;color:#bbb">Requiere HTTPS y permiso para usar la cámara.</p>
-</div>
-</div>
-<div id="status">Apuntá la cámara al código QR</div>
-<div id="choice">
-<button class="choice" id="yes"><img alt="Sí" src="https://user.cdn.mywebar.com/860448/BOTON__SI__1789653740658.png?hash=b313e32bfd1c15eb7fa6eb33bcf47f70&_=1789655917369"></button>
-<button class="choice" id="no"><img alt="No" src="https://user.cdn.mywebar.com/860448/BOTON__NO__1789653774074.png?hash=4735fdfd5f3cc99e73426affce64e2fc&_=1789655917369"></button>
-</div>
-<div id="media">
-<div id="box">
-<button id="close">✕</button>
-<video id="response" playsinline controls></video>
-</div>
-</div>
-<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
-<script>
-(() => {
-  const start = document.getElementById('start');
-  const camera = document.getElementById('camera');
-  const intro = document.getElementById('intro');
-  const status = document.getElementById('status');
-  let videoStream = null;
 
-  async function stopCamera() {
-    if (videoStream) {
-      videoStream.getTracks().forEach(t => t.stop());
-      videoStream = null;
-    }
-    camera.srcObject = null;
-  }
+  <!-- Video de Fondo para Cámara en Modo Giroscopio Fallback -->
+  <video id="camera-feed" playsinline autoplay muted></video>
 
-  async function startCamera() {
-    start.disabled = true;
-    start.textContent = 'Activando cámara…';
-    status.textContent = 'Solicitando permiso para la cámara…';
-    try {
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        throw new Error('Este navegador no permite acceder a la cámara. Abrí la página con HTTPS en Chrome o Safari actualizado.');
+  <!-- Canvas Principal 3D -->
+  <canvas id="three-canvas"></canvas>
+
+  <!-- Pantalla de Inicio y Carga -->
+  <div id="screen-intro">
+    <h1>Mazairita AR</h1>
+    <p>Conocé la especialidad de Producción Multimedial en Realidad Aumentada.</p>
+    <div id="progress-container">
+      <div id="progress-bar"></div>
+    </div>
+    <div id="progress-text">Cargando experiencia (0%)...</div>
+    <button id="btn-start" class="btn interactive" disabled>Comenzar</button>
+  </div>
+
+  <!-- Capa UI en la Experiencia -->
+  <div class="ui-layer">
+    <div id="status-banner">Iniciando sistema...</div>
+
+    <div style="display: flex; flex-direction: column; align-items: center; width: 100%;">
+      <div id="subtitles" style="display: none;"></div>
+      
+      <div id="choice-panel" class="interactive">
+        <button id="btn-yes" class="btn-choice btn-yes">¡SÍ!</button>
+        <button id="btn-no" class="btn-choice btn-no">NO</button>
+      </div>
+
+      <div id="controls-panel">
+        <button id="btn-relocate" class="btn-secondary interactive" style="display:none;">Reubicar escena</button>
+        <button id="btn-restart" class="btn-secondary interactive" style="display:none;">Volver a empezar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Elemento de Video HTML Oculto para Textura 3D -->
+  <video id="ar-video" playsinline preload="auto" crossorigin="anonymous" style="display:none;"></video>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+    /* =========================================================================
+       1. CONFIGURACIÓN GENERAL DEL PROYECTO Y ASSETS
+       ========================================================================= */
+    const CONFIG = {
+      // Configuración de audio primario: true si el MP3 manda el ritmo, false si el MP4 incluye la voz
+      useMp3AsMasterAudio: true,
+      
+      // Distancia inicial de colocación en metros en Modo B (Fallback Girosopico)
+      defaultPlacementDistance: 1.8,
+
+      // Mapeo de assets multimedia locales
+      assets: {
+        model: './assets/mazairita.glb',
+        bienvenida: {
+          mp3: './assets/voz_bienvenida.mp3',
+          mp4: './assets/video_bienvenida.mp4',
+          sub: '¡Hola! Soy Mazairita. Bienvenid@ a la especialidad de Producción Multimedial. ¿Querés saber qué hacemos?'
+        },
+        explicacion: {
+          mp3: './assets/voz_explicacion.mp3',
+          mp4: './assets/video_explicacion.mp4',
+          sub: '¡Buenísimo! Acá aprendemos diseño gráfico, edición de video, animación 3D, programación web y proyectos en RA.'
+        },
+        despedida: {
+          mp3: './assets/voz_despedida.mp3',
+          mp4: './assets/video_despedida.mp4',
+          sub: 'No hay problema. Podés recorrer la muestra y consultarnos lo que quieras. ¡Que disfrutes la exposición!',
+          foleys: [
+            { time: 0.5, src: './assets/foley_step.mp3' },
+            { time: 1.8, src: './assets/foley_bye.mp3' }
+          ]
+        }
+      },
+
+      // Mapeo de los nombres de los clips de animación definidos dentro del GLB
+      animations: {
+        aparicion: 'aparicion',
+        idle: 'idle',
+        hablar: 'hablar',
+        explicar: 'explicar',
+        despedida: 'despedida'
       }
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: false,
-        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }
+    };
+
+    /* =========================================================================
+       2. ESTADO GLOBAL DE LA APLICACIÓN
+       ========================================================================= */
+    const state = {
+      mode: 'NONE', // 'WEBXR' o 'GYRO_FALLBACK'
+      loadedAssets: 0,
+      totalAssets: 0,
+      currentPhase: 'INIT', // 'INIT', 'BIENVENIDA', 'WAIT_CHOICE', 'EXPLICACION', 'DESPEDIDA', 'END'
+      robotMixer: null,
+      robotActions: {},
+      loadedClips: [],
+      audioMaster: new Audio(),
+      foleyAudios: [],
+      xrHitTestSource: null,
+      xrRefSpace: null,
+      isPlaced: false,
+      gyroOrientation: { alpha: 0, beta: 0, gamma: 0 }
+    };
+
+    /* =========================================================================
+       3. ELEMENTOS DOM
+       ========================================================================= */
+    const DOM = {
+      screenIntro: document.getElementById('screen-intro'),
+      btnStart: document.getElementById('btn-start'),
+      progressBar: document.getElementById('progress-bar'),
+      progressText: document.getElementById('progress-text'),
+      statusBanner: document.getElementById('status-banner'),
+      subtitles: document.getElementById('subtitles'),
+      choicePanel: document.getElementById('choice-panel'),
+      btnYes: document.getElementById('btn-yes'),
+      btnNo: document.getElementById('btn-no'),
+      btnRelocate: document.getElementById('btn-relocate'),
+      btnRestart: document.getElementById('btn-restart'),
+      cameraFeed: document.getElementById('camera-feed'),
+      threeCanvas: document.getElementById('three-canvas'),
+      arVideo: document.getElementById('ar-video')
+    };
+
+    /* =========================================================================
+       4. ESCENA 3D (THREE.JS)
+       ========================================================================= */
+    let renderer, scene, camera;
+    let mainGroup, robotGroup, videoMesh;
+    let videoTexture;
+    const clock = new THREE.Clock();
+
+    function initThree() {
+      renderer = new THREE.WebGLRenderer({
+        canvas: DOM.threeCanvas,
+        alpha: true,
+        antialias: true,
+        powerPreference: 'high-performance'
       });
-      videoStream = stream;
-      camera.srcObject = stream;
-      await camera.play();
-      intro.style.display = 'none';
-      status.textContent = 'Cámara activada. Buscando el código QR…';
-      window.dispatchEvent(new Event('camera-ready'));
-    } catch (err) {
-      console.error('No se pudo activar la cámara:', err);
-      status.textContent = 'No se pudo activar la cámara.';
-      alert('No se pudo activar la cámara. Revisá el permiso del sitio y usá la URL HTTPS. Detalle: ' + (err.message || err.name || 'error desconocido'));
-      start.disabled = false;
-      start.textContent = 'Intentar activar cámara nuevamente';
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.outputColorSpace = THREE.SRGBColorSpace;
+      renderer.xr.enabled = true;
+
+      scene = new THREE.Scene();
+      camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.01, 20);
+
+      // Iluminación balanceada
+      const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 2.5);
+      hemiLight.position.set(0, 20, 0);
+      scene.add(hemiLight);
+
+      const dirLight = new THREE.DirectionalLight(0xffffff, 2.0);
+      dirLight.position.set(2, 5, 3);
+      scene.add(dirLight);
+
+      // Grupo Contenedor Principal
+      mainGroup = new THREE.Group();
+      scene.add(mainGroup);
+
+      // Sub-grupo para el Robot
+      robotGroup = new THREE.Group();
+      robotGroup.position.set(-0.5, -1.6, -CONFIG.defaultPlacementDistance); // Medio metro a la izquierda, 1.6m abajo
+      mainGroup.add(robotGroup);
+
+      // Creación del Plano 3D para la textura de Video MP4
+      const videoGeo = new THREE.PlaneGeometry(0.9, 1.6); // Proporción vertical 9:16 por defecto
+      videoTexture = new THREE.VideoTexture(DOM.arVideo);
+      videoTexture.colorSpace = THREE.SRGBColorSpace;
+
+      const videoMat = new THREE.MeshBasicMaterial({
+        map: videoTexture,
+        side: THREE.DoubleSide,
+        transparent: true
+      });
+
+      videoMesh = new THREE.Mesh(videoGeo, videoMat);
+      videoMesh.position.set(0.5, -1.6, -CONFIG.defaultPlacementDistance); // Medio metro a la derecha, 1.6m abajo
+      mainGroup.add(videoMesh);
+
+      window.addEventListener('resize', onWindowResize);
     }
-  }
 
-  start.addEventListener('click', startCamera);
-
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden) {
-      stopCamera();
-    } else if (videoStream === null && intro.style.display === 'none') {
-      startCamera();
+    function onWindowResize() {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
     }
-  });
 
-  window.addEventListener('beforeunload', stopCamera);
-})();
-</script>
-<script type="importmap">
-{
-  "imports": {
-    "three": "https://unpkg.com/three@0.170.0/build/three.module.js",
-    "three/addons/": "https://unpkg.com/three@0.170.0/examples/jsm"
-  }
-}
-</script>
-<script type="module">
-import * as THREE from 'three';
-import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
+    /* =========================================================================
+       5. SISTEMA DE PRECARGA DE ASSETS
+       ========================================================================= */
+    function updateProgress(msg) {
+      const pct = Math.round((state.loadedAssets / state.totalAssets) * 100) || 0;
+      DOM.progressBar.style.width = `${pct}%`;
+      DOM.progressText.textContent = `${msg} (${pct}%)`;
+    }
 
-const MODEL = 'https://user.cdn.mywebar.com/860448/MAZAIRITA_VERSION_FINAL_APARICION_Y_SALUDO_1791383762681.glb';
-const YESVID = 'https://user.cdn.mywebar.com/860448/despedida_1789655906394.mp4';
-const NOVID = 'https://user.cdn.mywebar.com/860448/MARCO_TEXTO_1790173626964.mp4';
+    async function preloadAllAssets() {
+      const assetUrls = [
+        CONFIG.assets.model,
+        CONFIG.assets.bienvenida.mp3, CONFIG.assets.bienvenida.mp4,
+        CONFIG.assets.explicacion.mp3, CONFIG.assets.explicacion.mp4,
+        CONFIG.assets.despedida.mp3, CONFIG.assets.despedida.mp4
+      ];
 
-const cam = document.querySelector('#camera');
-const canvas = document.querySelector('#scan');
-const ctx = canvas.getContext('2d', {willReadFrequently:true});
-const intro = document.querySelector('#intro');
-const status = document.querySelector('#status');
-const choice = document.querySelector('#choice');
-const media = document.querySelector('#media');
-const response = document.querySelector('#response');
+      if (CONFIG.assets.despedida.foleys) {
+        CONFIG.assets.despedida.foleys.forEach(f => assetUrls.push(f.src));
+      }
 
-const renderer = new THREE.WebGLRenderer({canvas:document.querySelector('#three'), alpha:true, antialias:true});
-renderer.setPixelRatio(Math.min(devicePixelRatio||1, 2));
-renderer.setSize(innerWidth, innerHeight);
-renderer.outputColorSpace = THREE.SRGBColorSpace;
+      state.totalAssets = assetUrls.length;
+      updateProgress('Iniciando descarga de recursos...');
 
-const scene = new THREE.Scene();
-const cam3d = new THREE.PerspectiveCamera(45, innerWidth/innerHeight, 0.01, 100);
-cam3d.position.set(0, 0, 5);
+      const gltfLoader = new GLTFLoader();
 
-scene.add(new THREE.HemisphereLight(0xffffff, 0x777777, 2));
-const light = new THREE.DirectionalLight(0xffffff, 2);
-light.position.set(2, 4, 5);
-scene.add(light);
+      // Carga de Modelo GLB
+      const loadModel = new Promise((resolve) => {
+        gltfLoader.load(CONFIG.assets.model, (gltf) => {
+          const robotModel = gltf.scene;
+          robotModel.scale.set(0.8, 0.8, 0.8);
+          robotGroup.add(robotModel);
 
-const root = new THREE.Group();
-scene.add(root);
-root.visible = false;
+          // Configuración de animaciones GLB
+          if (gltf.animations && gltf.animations.length > 0) {
+            state.robotMixer = new THREE.AnimationMixer(robotModel);
+            state.loadedClips = gltf.animations;
 
-let ready = false;
-let active = false;
-let mediaOpen = false;
-let lastScan = 0;
-let lastSeen = 0;
+            gltf.animations.forEach(clip => {
+              const action = state.robotMixer.clipAction(clip);
+              state.robotActions[clip.name] = action;
+            });
 
-const clock = new THREE.Clock();
+            // Verificar clips esperados
+            Object.values(CONFIG.animations).forEach(animName => {
+              if (!state.robotActions[animName]) {
+                console.warn(`[GLB] Advertencia: No se encontró la animación "${animName}" en el modelo.`);
+              }
+            });
+          }
+          state.loadedAssets++;
+          updateProgress('Modelo 3D cargado correctamente');
+          resolve();
+        }, undefined, (err) => {
+          console.error('[GLB] Error al cargar el modelo 3D:', err);
+          state.loadedAssets++;
+          updateProgress('Fallo en el modelo 3D (continuando)...');
+          resolve();
+        });
+      });
 
-new GLTFLoader().load(MODEL, g => {
-  const obj = g.scene;
-  const b = new THREE.Box3().setFromObject(obj);
-  const s = b.getSize(new THREE.Vector3());
-  const c = b.getCenter(new THREE.Vector3());
-  obj.position.sub(c);
-  obj.scale.setScalar(1.8 / (Math.max(s.x, s.y, s.z) || 1));
-  root.add(obj);
-  if (g.animations && g.animations.length) {
-    const mixer = new THREE.AnimationMixer(obj);
-    g.animations.forEach(clip => mixer.clipAction(clip).reset().play());
-    root.userData.mixer = mixer;
-    console.info('Animaciones encontradas:', g.animations.map(a => a.name), 'duración:', g.animations.map(a => a.duration));
-  } else {
-    console.warn('El archivo GLB no contiene clips de animación.');
-  }
-  ready = true;
-}, undefined, e => {
-  console.error('Error cargando modelo 3D', e);
-  status.textContent = 'Error cargando modelo 3D';
-  alert('No se pudo cargar el modelo 3D. Verificá tu conexión e intentá de nuevo.');
-});
+      // Precarga de archivos de Medios (Audio/Video fetch a Blob)
+      const loadMedia = assetUrls.filter(u => u !== CONFIG.assets.model).map(url => {
+        return fetch(url)
+          .then(res => res.blob())
+          .then(() => {
+            state.loadedAssets++;
+            updateProgress(`Cargado: ${url.split('/').pop()}`);
+          })
+          .catch(err => {
+            console.warn(`[Assets] Error al precargar media: ${url}`, err);
+            state.loadedAssets++;
+            updateProgress(`Error en archivo: ${url.split('/').pop()}`);
+          });
+      });
 
-function renderLoop() {
-  requestAnimationFrame(renderLoop);
-  const delta = Math.min(clock.getDelta(), 0.05);
-  if (root.userData.mixer) root.userData.mixer.update(delta);
-  renderer.render(scene, cam3d);
-}
-renderLoop();
+      await Promise.all([loadModel, ...loadMedia]);
 
-function resize() {
-  renderer.setSize(innerWidth, innerHeight);
-  cam3d.aspect = innerWidth / innerHeight;
-  cam3d.updateProjectionMatrix();
-}
-addEventListener('resize', resize);
+      DOM.btnStart.disabled = false;
+      DOM.progressText.textContent = '¡Todo listo para comenzar!';
+    }
 
-window.addEventListener('camera-ready', () => {
-  active = true;
-  status.textContent = 'Buscando el código QR…';
-  requestAnimationFrame(scanLoop);
-});
+    /* =========================================================================
+       6. INICIALIZACIÓN DE CÁMARA Y DISPOSITIVO (MODOS A Y B)
+       ========================================================================= */
+    async function initExperience() {
+      DOM.screenIntro.style.display = 'none';
 
-function scanLoop(t) {
-  if (!active) return;
-  requestAnimationFrame(scanLoop);
-  if (t - lastScan < 80 || !cam.srcObject || cam.readyState < 2) return;
-  lastScan = t;
-  const w = cam.videoWidth;
-  const h = cam.videoHeight;
-  if (!w || !h) return;
-  if (canvas.width !== w || canvas.height !== h) {
-    canvas.width = w;
-    canvas.height = h;
-  }
-  ctx.drawImage(cam, 0, 0, w, h);
-  const image = ctx.getImageData(0, 0, w, h);
-  const code = (typeof window.jsQR === 'function' ? window.jsQR(image.data, w, h, {inversionAttempts: 'attemptBoth'}) : null);
-  
-  if (code?.location) {
-    lastSeen = t;
-    const p = code.location;
-    const pts = [p.topLeftCorner, p.topRightCorner, p.bottomRightCorner, p.bottomLeftCorner];
-    const cx = pts.reduce((a, q) => a + q.x, 0) / 4;
-    const cy = pts.reduce((a, q) => a + q.y, 0) / 4;
-    const edge = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
-    const x = cx / w;
-    const y = cy / h;
-    const sx = edge / w;
-    const ndcx = x * 2 - 1;
-    const ndcy = 1 - y * 2;
-    const dist = 3.4;
-    const hh = 2 * Math.tan(THREE.MathUtils.degToRad(cam3d.fov) / 2) * dist;
-    root.position.set(ndcx * hh * cam3d.aspect / 2, ndcy * hh / 2, 0);
-    root.scale.setScalar(Math.max(0.35, Math.min(2.4, sx * hh * 1.5)));
-    root.visible = ready && !mediaOpen;
-    choice.style.display = mediaOpen ? 'none' : 'flex';
-    status.textContent = '¡QR detectado! Mantenelo dentro de la cámara.';
-  } else if (t - lastSeen > 220) {
-    root.visible = false;
-    choice.style.display = 'none';
-    if (!mediaOpen) status.textContent = 'Apuntá la cámara al código QR';
-  }
-}
+      // Verificar compatibilidad con WebXR (Modo A)
+      if (navigator.xr) {
+        const supported = await navigator.xr.isSessionSupported('immersive-ar').catch(() => false);
+        if (supported) {
+          startWebXRSession();
+          return;
+        }
+      }
 
-function showVideo(url) {
-  mediaOpen = true;
-  root.visible = false;
-  choice.style.display = 'none';
-  response.pause();
-  response.src = url;
-  media.style.display = 'flex';
-  response.load();
-  response.play().catch(() => {
-    status.textContent = 'Error reproduciendo video';
-    media.style.display = 'none';
-    mediaOpen = false;
-  });
-}
+      // Fallback a Modo B: Cámara HTML + Giroscopio
+      startGyroFallback();
+    }
 
-function closeVideo() {
-  response.pause();
-  response.src = '';
-  response.load();
-  media.style.display = 'none';
-  mediaOpen = false;
-}
+    // Modo A: WebXR Immersive AR
+    async function startWebXRSession() {
+      state.mode = 'WEBXR';
+      DOM.statusBanner.textContent = 'Modo WebXR: Tocá la pantalla para colocar la escena';
 
-document.querySelector('#yes').onclick = () => showVideo(YESVID);
-document.querySelector('#no').onclick = () => showVideo(NOVID);
-document.querySelector('#close').onclick = closeVideo;
-media.onclick = e => { if (e.target === media) closeVideo() };
-</script>
+      try {
+        const session = await navigator.xr.requestSession('immersive-ar', {
+          requiredFeatures: ['hit-test', 'local-floor']
+        });
+        renderer.xr.setReferenceSpaceType('local-floor');
+        await renderer.xr.setSession(session);
+
+        const viewerSpace = await session.requestReferenceSpace('viewer');
+        state.xrHitTestSource = await session.requestHitTestSource({ space: viewerSpace });
+        state.xrRefSpace = await renderer.xr.getReferenceSpace();
+
+        session.addEventListener('select', onXRSelect);
+        session.addEventListener('end', () => { state.mode = 'NONE'; });
+      } catch (e) {
+        console.warn('WebXR falló al iniciar, usando Modo Giroscopio:', e);
+        startGyroFallback();
+      }
+    }
+
+    function onXRSelect() {
+      if (!state.isPlaced && mainGroup) {
+        state.isPlaced = true;
+        DOM.statusBanner.textContent = 'Escena fijada en el espacio';
+        startPhaseBienvenida();
+      }
+    }
+
+    // Modo B: Giroscopio y Cámara Trasera
+    async function startGyroFallback() {
+      state.mode = 'GYRO_FALLBACK';
+      DOM.statusBanner.textContent = 'Modo Cámara + Giroscopio activo';
+      DOM.btnRelocate.style.display = 'block';
+
+      // 1. Permiso y Activación de Cámara Trasera
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
+          audio: false
+        });
+        DOM.cameraFeed.srcObject = stream;
+      } catch (err) {
+        console.error('Error al acceder a la cámara:', err);
+        DOM.statusBanner.textContent = 'Error: No se otorgó acceso a la cámara';
+      }
+
+      // 2. Solicitar permiso de Giroscopio en iOS Safari 13+
+      if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+        try {
+          const permission = await DeviceOrientationEvent.requestPermission();
+          if (permission === 'granted') {
+            window.addEventListener('deviceorientation', onDeviceOrientation);
+          }
+        } catch (e) {
+          console.warn('Permiso de giroscopio denegado o no disponible:', e);
+        }
+      } else {
+        window.addEventListener('deviceorientation', onDeviceOrientation);
+      }
+
+      // Ubicación inicial frente al usuario
+      repositionSceneGyro();
+      startPhaseBienvenida();
+    }
+
+    function onDeviceOrientation(e) {
+      state.gyroOrientation.alpha = e.alpha || 0;
+      state.gyroOrientation.beta = e.beta || 0;
+      state.gyroOrientation.gamma = e.gamma || 0;
+
+      if (state.mode === 'GYRO_FALLBACK') {
+        // Control suave de rotación de la cámara 3D acorde al giroscopio
+        const alphaRad = THREE.MathUtils.degToRad(state.gyroOrientation.alpha);
+        const betaRad = THREE.MathUtils.degToRad(state.gyroOrientation.beta);
+        camera.rotation.set(betaRad * 0.1, alphaRad * 0.1, 0, 'YXZ');
+      }
+    }
+
+    function repositionSceneGyro() {
+      mainGroup.position.set(0, 0, 0);
+      mainGroup.rotation.set(0, 0, 0);
+    }
+
+    /* =========================================================================
+       7. MÁQUINA DE ESTADOS Y SINCRONIZACIÓN DE ANIMACIÓN / VOZ
+       ========================================================================= */
+
+    function playAnimation(animName, loop = false) {
+      if (!state.robotMixer) return;
+      const action = state.robotActions[animName];
+      if (action) {
+        state.robotMixer.stopAllAction();
+        action.reset();
+        action.setLoop(loop ? THREE.LoopRepeat : THREE.LoopOnce, loop ? Infinity : 1);
+        action.clampWhenFinished = !loop;
+        action.play();
+      }
+    }
+
+    function playAudioAndVideo(mp3Url, mp4Url, subtitleText, onEndedCallback) {
+      // 1. Mostrar Subtítulo
+      DOM.subtitles.textContent = subtitleText;
+      DOM.subtitles.style.display = 'flex';
+
+      // 2. Configurar y Reproducir Video MP4 en la Textura 3D
+      DOM.arVideo.src = mp4Url;
+      DOM.arVideo.currentTime = 0;
+      DOM.arVideo.muted = CONFIG.useMp3AsMasterAudio; // Evitar eco si el máster es el MP3
+      DOM.arVideo.play().catch(e => console.warn('Error autoplay video:', e));
+
+      // 3. Configurar y Reproducir Audio MP3 Máster
+      state.audioMaster.src = mp3Url;
+      state.audioMaster.currentTime = 0;
+      state.audioMaster.play().catch(e => console.warn('Error autoplay audio:', e));
+
+      // 4. Callback al finalizar
+      state.audioMaster.onended = () => {
+        DOM.subtitles.style.display = 'none';
+        if (onEndedCallback) onEndedCallback();
+      };
+    }
+
+    // FASE 3: Bienvenida
+    function startPhaseBienvenida() {
+      state.currentPhase = 'BIENVENIDA';
+      playAnimation(CONFIG.animations.hablar, true);
+
+      playAudioAndVideo(
+        CONFIG.assets.bienvenida.mp3,
+        CONFIG.assets.bienvenida.mp4,
+        CONFIG.assets.bienvenida.sub,
+        () => {
+          startPhaseWaitChoice();
+        }
+      );
+    }
+
+    // FASE 4: Espera de Interacción
+    function startPhaseWaitChoice() {
+      state.currentPhase = 'WAIT_CHOICE';
+      playAnimation(CONFIG.animations.idle, true);
+      DOM.choicePanel.style.display = 'flex';
+      DOM.statusBanner.textContent = 'Seleccioná una opción para continuar';
+    }
+
+    // FASE 5: Respuesta SÍ
+    function onChoiceYes() {
+      DOM.choicePanel.style.display = 'none';
+      state.currentPhase = 'EXPLICACION';
+      playAnimation(CONFIG.animations.explicar, false);
+
+      playAudioAndVideo(
+        CONFIG.assets.explicacion.mp3,
+        CONFIG.assets.explicacion.mp4,
+        CONFIG.assets.explicacion.sub,
+        () => {
+          showEndState();
+        }
+      );
+    }
+
+    // FASE 6: Respuesta NO
+    function onChoiceNo() {
+      DOM.choicePanel.style.display = 'none';
+      state.currentPhase = 'DESPEDIDA';
+      playAnimation(CONFIG.animations.despedida, false);
+
+      // Disparar Foleys (Efectos de sonido) si están configurados
+      if (CONFIG.assets.despedida.foleys) {
+        CONFIG.assets.despedida.foleys.forEach(foley => {
+          setTimeout(() => {
+            const audioFoley = new Audio(foley.src);
+            audioFoley.play().catch(() => {});
+          }, foley.time * 1000);
+        });
+      }
+
+      playAudioAndVideo(
+        CONFIG.assets.despedida.mp3,
+        CONFIG.assets.despedida.mp4,
+        CONFIG.assets.despedida.sub,
+        () => {
+          showEndState();
+        }
+      );
+    }
+
+    function showEndState() {
+      state.currentPhase = 'END';
+      playAnimation(CONFIG.animations.idle, true);
+      DOM.btnRestart.style.display = 'block';
+      DOM.statusBanner.textContent = 'Experiencia finalizada.';
+    }
+
+    // FASE 7: Reiniciar Experiencia
+    function resetExperience() {
+      state.audioMaster.pause();
+      DOM.arVideo.pause();
+
+      DOM.btnRestart.style.display = 'none';
+      DOM.choicePanel.style.display = 'none';
+      DOM.subtitles.style.display = 'none';
+
+      startPhaseBienvenida();
+    }
+
+    /* =========================================================================
+       8. BUCLE DE RENDERIZADO Y SINCRONIZACIÓN DE AUDIO (~80ms)
+       ========================================================================= */
+    function render(timestamp, frame) {
+      const delta = clock.getDelta();
+
+      // Sincronización del Audio Máster con el AnimationMixer del Robot
+      if (state.robotMixer && !state.audioMaster.paused && state.audioMaster.duration > 0) {
+        const audioTime = state.audioMaster.currentTime;
+        const mixerTime = state.robotMixer.time;
+
+        // Corrección de desfase si supera los 80 ms (0.08 s)
+        if (Math.abs(audioTime - mixerTime) > 0.08) {
+          state.robotMixer.setTime(audioTime);
+        } else {
+          state.robotMixer.update(delta);
+        }
+      } else if (state.robotMixer) {
+        state.robotMixer.update(delta);
+      }
+
+      // Procesamiento Hit-Test de WebXR (Modo A)
+      if (state.mode === 'WEBXR' && frame && state.xrHitTestSource && !state.isPlaced) {
+        const hitTestResults = frame.getHitTestResults(state.xrHitTestSource);
+        if (hitTestResults.length > 0) {
+          const hit = hitTestResults[0];
+          const pose = hit.getPose(state.xrRefSpace);
+          mainGroup.position.copy(pose.transform.position);
+          mainGroup.quaternion.copy(pose.transform.orientation);
+        }
+      }
+
+      // Efecto Billboard sobre el eje Y para que Robot y Video miren siempre al usuario
+      if (mainGroup && camera) {
+        const camPos = new THREE.Vector3();
+        camera.getWorldPosition(camPos);
+        camPos.y = mainGroup.position.y; // Evitar inclinaciones verticales
+        mainGroup.lookAt(camPos);
+      }
+
+      renderer.render(scene, camera);
+    }
+
+    /* =========================================================================
+       9. EVENTOS E INICIALIZACIÓN
+       ========================================================================= */
+    function bindEvents() {
+      DOM.btnStart.addEventListener('click', initExperience);
+      DOM.btnYes.addEventListener('click', onChoiceYes);
+      DOM.btnNo.addEventListener('click', onChoiceNo);
+      DOM.btnRelocate.addEventListener('click', repositionSceneGyro);
+      DOM.btnRestart.addEventListener('click', resetExperience);
+
+      // Gestión de Visibilidad para Pausar Medios (Batería y Rendimiento)
+      document.addEventListener('visibilitychange', () => {
+        if (document.hidden) {
+          state.audioMaster.pause();
+          DOM.arVideo.pause();
+          if (DOM.cameraFeed.srcObject) {
+            DOM.cameraFeed.srcObject.getTracks().forEach(t => t.stop());
+          }
+        } else if (state.mode === 'GYRO_FALLBACK') {
+          startGyroFallback();
+        }
+      });
+    }
+
+    // Punto de Entrada Principal
+    window.addEventListener('DOMContentLoaded', () => {
+      initThree();
+      bindEvents();
+      preloadAllAssets();
+      renderer.setAnimationLoop(render);
+    });
+  </script>
 </body>
 </html>
